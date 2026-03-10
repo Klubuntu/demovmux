@@ -197,8 +197,8 @@ export default function EmulatorPage() {
     const h = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       switch (e.key) {
-        case 'ArrowUp':    e.preventDefault(); showMenu ? setMenuIdx(i => Math.max(0, i-1)) : chUp(); break;
-        case 'ArrowDown':  e.preventDefault(); showMenu ? setMenuIdx(i => Math.min(MENU_ITEMS.length-1, i+1)) : chDown(); break;
+        case 'ArrowUp':    e.preventDefault(); if (showMenu) setMenuIdx(i => Math.max(0, i-1)); else chUp(); break;
+        case 'ArrowDown':  e.preventDefault(); if (showMenu) setMenuIdx(i => Math.min(MENU_ITEMS.length-1, i+1)); else chDown(); break;
         case 'ArrowLeft':  e.preventDefault(); volDown(); break;
         case 'ArrowRight': e.preventDefault(); volUp();   break;
         case 'Enter':      e.preventDefault(); if (showMenu) handleMenuSelect(MENU_ITEMS[menuIdx], menuIdx); break;
@@ -661,7 +661,7 @@ export default function EmulatorPage() {
             </div>
             <div className="px-5 py-4 border-t border-gray-800 text-center">
               <p className="text-xs text-gray-600">
-                <strong className="text-gray-500">PPM</strong> na „vMUX Emulator" → lista MUX bieżącego trybu ·{' '}
+                <strong className="text-gray-500">PPM</strong> na „vMUX Emulator&rdquo; → lista MUX bieżącego trybu ·{' '}
                 <strong className="text-gray-500">niebieski ●</strong> → info o systemie
               </p>
             </div>
