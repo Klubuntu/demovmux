@@ -26,9 +26,14 @@ function getDatabaseUrl(): string {
   if (url) return url;
 
   if (process.env.NODE_ENV === 'production') {
-    throw new Error('Missing DATABASE_URL in production environment');
+    const supabaseHint = process.env.NEXT_PUBLIC_SUPABASE_URL
+      ? `\nHint: Supabase URL detected. In Supabase dashboard go to Connect → Transaction pooler` +
+        ` and copy the URL (port 6543), then set it as DATABASE_URL in your environment.`
+      : '';
+    throw new Error(`Missing DATABASE_URL environment variable.${supabaseHint}`);
   }
 
+  // Local dev fallback: use SQLite
   return `file:${DB_PATH}`;
 }
 
@@ -63,6 +68,7 @@ export function createDb(): DbClient {
   if (_client) return _client;
 
   const url = getDatabaseUrl();
+
   if (url.startsWith('file:')) {
     _client = { kind: 'sqlite', db: createSqliteDbFromUrl(url) };
     return _client;

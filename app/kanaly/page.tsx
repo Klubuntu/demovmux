@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Plus, Pencil, Trash2, Wifi, CalendarDays, Music } from 'lucide-react';
 import StatusBadge from '@/components/StatusBadge';
 import Modal from '@/components/Modal';
+import FieldHint from '@/components/FieldHint';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 
@@ -209,23 +210,29 @@ export default function KanalyPage() {
               </div>
 
               {([
-                ['name', 'Nazwa kanału', 'text'], ['short_name', 'Krótka nazwa', 'text'],
-                ['lcn', 'LCN', 'number'], ['service_id', 'Service ID', 'number'],
-                ['pmt_pid', 'PMT PID', 'number'], ['video_pid', 'Video PID', 'number'],
-                ['audio_pid', 'Audio PID', 'number'], ['pcr_pid', 'PCR PID', 'number'],
-                ['video_format', 'Format wideo', 'select', ['HD 1080i', 'HD 720p', 'SD 576i', '4K UHD', 'H.264 HD', 'H.265 HD']],
-                ['video_bitrate_mbps', 'Bitrate wideo (Mbps)', 'number'],
-                ['audio_bitrate_kbps', 'Bitrate audio (kbps)', 'number'],
-                ['statmux_weight', 'Waga StatMux (0-100)', 'number'],
-                ['statmux_min_mbps', 'Min bitrate (Mbps)', 'number'],
-                ['statmux_max_mbps', 'Max bitrate (Mbps)', 'number'],
-                ['hbbtv_enabled', 'HbbTV', 'select', ['0', '1']],
-                ['teletext_enabled', 'Teletext', 'select', ['0', '1']],
-                ['ssu_enabled', 'SSU', 'select', ['0', '1']],
+                ['name', 'Nazwa kanału', 'text'],
+                ['short_name', 'Krótka nazwa', 'text', undefined, 'Skrócona nazwa (do 8 znaków) używana w tabelach SI/EPG i na niektórych pilotach DVB (pole short_name w SDT).'],
+                ['lcn', 'LCN', 'number', undefined, 'Logical Channel Number — numer kanału na pilocie TV (np. TVP1 = 1). Wpisywany przez operatora do tablicy LCN w NIT.'],
+                ['service_id', 'Service ID', 'number', undefined, 'SID: unikalny identyfikator usługi (kanału) wewnątrz strumienia TS (1–65535). Widoczny w tablicach PAT i SDT.'],
+                ['pmt_pid', 'PMT PID', 'number', undefined, 'PID pakietów z tablicą PMT (Program Map Table) — opisuje, które PID-y należą do tej usługi (video, audio, teletext itp.).'],
+                ['video_pid', 'Video PID', 'number', undefined, 'PID pakietów elementarnych (PES) niosących skompresowany sygnał wideo.'],
+                ['audio_pid', 'Audio PID', 'number', undefined, 'PID pakietów elementarnych (PES) niosących skompresowany sygnał audio.'],
+                ['pcr_pid', 'PCR PID', 'number', undefined, 'PID zawierający znaczniki PCR (Program Clock Reference) do synchronizacji zegara dekodera. Zwykle identyczny z Video PID.'],
+                ['video_format', 'Format wideo', 'select', ['HD 1080i', 'HD 720p', 'SD 576i', '4K UHD', 'H.264 HD', 'H.265 HD'], 'Rozdzielczość i tryb skanowania (i = przeplot, p = progresywne). Wpływa na wyświetlaną ikonę HD/SD na TV.'],
+                ['video_bitrate_mbps', 'Bitrate wideo (Mbps)', 'number', undefined, 'Docelowy/nominalny bitrate strumienia wideo w Mbit/s. Rzeczywisty może się różnić przy aktywnym StatMux.'],
+                ['audio_bitrate_kbps', 'Bitrate audio (kbps)', 'number', undefined, 'Bitrate strumienia audio w kbit/s. Typowe wartości: 128 kbps (mono/radio), 192–320 kbps (stereo TV).'],
+                ['statmux_weight', 'Waga StatMux (0-100)', 'number', undefined, 'Priorytet alokacji przepływności w puli StatMux. Wyższy = kanał dostaje więcej bitrate przy dużym ruchu (np. kanały sportowe mają wyższe wagi).'],
+                ['statmux_min_mbps', 'Min bitrate (Mbps)', 'number', undefined, 'Minimalne gwarantowane pasmo w Mbit/s, którego StatMux nigdy nie odebrał temu kanałowi.'],
+                ['statmux_max_mbps', 'Max bitrate (Mbps)', 'number', undefined, 'Górny limit pasma w Mbit/s, jaki kanał może zająć z puli StatMux (np. przy statycznych scenach).'],
+                ['hbbtv_enabled', 'HbbTV', 'select', ['0', '1'], 'Hybrid Broadcast Broadband TV — interaktywna nakładka (czerwony przycisk, catch-up TV). Wymaga URL aplikacji AIT i łącza broadband u widza.'],
+                ['teletext_enabled', 'Teletext', 'select', ['0', '1'], 'Transmisja stron teletekstu w strumieniu TS. Wpisywane w PMT jako strumień prywatny (typ 0x06). Wymaga dosyłu VBI od nadawcy.'],
+                ['ssu_enabled', 'SSU', 'select', ['0', '1'], 'System Software Update — mechanizm OTA aktualizacji oprogramowania dekoderów przez strumień TS (wg ETSI TR 101 202).'],
                 ['status', 'Status', 'select', ['active', 'inactive', 'error']],
-              ] as [keyof Channel, string, string, string[]?][]).map(([key, label, type, opts]) => (
+              ] as [keyof Channel, string, string, string[]?, string?][]).map(([key, label, type, opts, hint]) => (
                 <div key={key}>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
+                  <label className="flex items-center gap-1 text-xs font-medium text-gray-700 mb-1">
+                    {label}{hint && <FieldHint text={hint} />}
+                  </label>
                   {type === 'select' ? (
                     <select value={String(editing[key] ?? '')} onChange={e => f(key, e.target.value)}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -239,7 +246,9 @@ export default function KanalyPage() {
               ))}
 
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-700 mb-1">URL HbbTV</label>
+                <label className="flex items-center gap-1 text-xs font-medium text-gray-700 mb-1">
+                  URL HbbTV <FieldHint text="URL aplikacji HbbTV (https://...). Wpisywany do tablicy AIT jako punkt wejścia aplikacji interaktywnej (czerwony przycisk, catch-up)." />
+                </label>
                 <input type="text" value={editing.hbbtv_url ?? ''} onChange={e => f('hbbtv_url', e.target.value)}
                   placeholder="https://..."
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -254,14 +263,18 @@ export default function KanalyPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Adres strumienia (HLS/RTMP/SRT/DASH/UDP)</label>
+                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 mb-1">
+                      Adres strumienia <FieldHint text="Pełny URL strumienia dostarczanego przez nadawcę lub koder. Obsługiwane protokoły: HLS (https://), RTMP (rtmp://), SRT (srt://), UDP (udp://@adres:port)." />
+                    </label>
                     <input type="text" value={editing.stream_url ?? ''} onChange={e => f('stream_url', e.target.value)}
                       placeholder="https://... lub rtmp://... lub srt://..."
                       disabled={!isIptv}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50" />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Protokół strumienia</label>
+                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 mb-1">
+                      Protokół strumienia <FieldHint text="Wybierz protokół odpowiadający URL strumienia. Wpływa na ikonę w tabeli i sposób przetwarzania przez odtwarzacz." />
+                    </label>
                     <select value={editing.stream_type ?? 'hls'} onChange={e => f('stream_type', e.target.value)}
                       disabled={!isIptv}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50">
@@ -275,14 +288,18 @@ export default function KanalyPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">ID kanału w źródle EPG</label>
+                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 mb-1">
+                      ID kanału w źródle EPG <FieldHint text="Identyfikator kanału w zewnętrznym pliku XMLTV (np. 'tvp1.pl', 'polsat.pl'). Musi odpowiadać atrybutowi id elementu channel w pliku EPG." />
+                    </label>
                     <input type="text" value={editing.epg_channel_id ?? ''} onChange={e => f('epg_channel_id', e.target.value)}
                       placeholder="np. tvp1.pl"
                       disabled={!isIptv}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50" />
                   </div>
                   <div className="col-span-2">
-                    <label className="block text-xs font-medium text-gray-600 mb-1">URL źródła EPG (XMLTV)</label>
+                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 mb-1">
+                      URL źródła EPG (XMLTV) <FieldHint text="URL do pliku EPG w formacie XMLTV z danymi programowymi dla tego kanału. Plik musi zawierać element channel z pasującym id." />
+                    </label>
                     <input type="text" value={editing.epg_source_url ?? ''} onChange={e => f('epg_source_url', e.target.value)}
                       placeholder="https://epg.example.com/xmltv.xml"
                       disabled={!isIptv}
@@ -308,7 +325,9 @@ export default function KanalyPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Kodek audio</label>
+                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 mb-1">
+                      Kodek audio <FieldHint text="Kodek kompresji audio. MP2 = tradycyjny dla DVB (wymagany przez niektóre odbiorniki). AAC/HE-AAC = nowoczesne, wydajniejsze kodeki stosowane w DVB-T2." />
+                    </label>
                     <select value={editing.audio_codec ?? 'AAC'} onChange={e => f('audio_codec', e.target.value)}
                       disabled={!isRadio}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50">
@@ -321,7 +340,9 @@ export default function KanalyPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Częstotliwość próbkowania (Hz)</label>
+                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 mb-1">
+                      Częstotliwość próbkowania (Hz) <FieldHint text="Liczba próbek audio na sekundę. 48 000 Hz = standard broadcast (zalecane). 44 100 Hz = standard CD." />
+                    </label>
                     <select value={String(editing.sample_rate_hz ?? 48000)} onChange={e => f('sample_rate_hz', Number(e.target.value))}
                       disabled={!isRadio}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50">
@@ -331,7 +352,9 @@ export default function KanalyPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Tryb stereo</label>
+                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 mb-1">
+                      Tryb stereo <FieldHint text="Sposób kodowania kanałów stereo. Joint Stereo = wydajniejszy od stereo. Dual Mono = dwa niezależne kanały mono (np. różne języki). Mono = jeden kanał." />
+                    </label>
                     <select value={editing.stereo_mode ?? 'stereo'} onChange={e => f('stereo_mode', e.target.value)}
                       disabled={!isRadio}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50">

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Pencil, Trash2, Wifi, WifiOff, AlertCircle, Clock, Globe, Satellite, Radio, Waves } from 'lucide-react';
 import StatusBadge from '@/components/StatusBadge';
 import Modal from '@/components/Modal';
+import FieldHint from '@/components/FieldHint';
 
 interface Stream {
   id: number; name: string; broadcaster: string; type: string; protocol: string;
@@ -132,17 +133,21 @@ export default function StrumieniaPage() {
       <Modal title={isEdit ? `Edytuj: ${editing.name}` : 'Nowy strumień wejściowy'} open={modal} onClose={() => setModal(false)} size="lg">
         <div className="grid grid-cols-2 gap-4">
           {([
-            ['name', 'Nazwa', 'text'], ['broadcaster', 'Nadawca', 'text'],
-            ['type', 'Typ łącza', 'select', ['fiber', 'satellite', 'microwave', 'ip_srt', 'ip_rist', 'backhaul', 'offair']],
-            ['protocol', 'Protokół', 'text'],
-            ['source_address', 'Adres źródłowy', 'text'], ['source_port', 'Port', 'number'],
-            ['bitrate_mbps', 'Bitrate (Mbps)', 'number'],
-            ['redundancy_mode', 'Tryb redundancji', 'select', ['none', 'primary', 'backup']],
-            ['encryption', 'Szyfrowanie', 'text'],
+            ['name', 'Nazwa', 'text'],
+            ['broadcaster', 'Nadawca', 'text'],
+            ['type', 'Typ łącza', 'select', ['fiber', 'satellite', 'microwave', 'ip_srt', 'ip_rist', 'backhaul', 'offair'], 'Fizyczne medium dosyłu: Światłowód = ASI/IP po kablach, Satelita = DVB-S2, Radiolinia = mikrofale, IP/SRT = internet z szyfrowaniem, Backhaul = łącze agregacyjne.'],
+            ['protocol', 'Protokół', 'text', undefined, 'Protokół warstwy transportowej sygnału (np. ASI, UDP, RTP, SRT, RIST, HLS). Wpisz ręcznie zgodnie z konfiguracją kodera/nadajnika.'],
+            ['source_address', 'Adres źródłowy', 'text', undefined, 'Adres IP lub hostname hosta źródłowego sygnału (np. 10.0.0.100 lub encoder.nadawca.pl). Przy ASI zostaw puste.'],
+            ['source_port', 'Port', 'number', undefined, 'Numer portu UDP/TCP: RTP = 5004, SRT = 4201, RTMP = 1935, RIST = 5004. Przy łączu ASI (fizycznym) wpisz 0.'],
+            ['bitrate_mbps', 'Bitrate (Mbps)', 'number', undefined, 'Oczekiwana/nominalna przepływność sygnału wejściowego w Mbit/s. Używana do monitorowania i wyzwalania alarmów odchylenia.'],
+            ['redundancy_mode', 'Tryb redundancji', 'select', ['none', 'primary', 'backup'], 'primary = główny tor sygnałowy · backup = zapasowy (przełączany przy awarii toru primary) · none = brak redundancji.'],
+            ['encryption', 'Szyfrowanie', 'text', undefined, 'Typ szyfrowania sygnału dosyłowego (np. none, AES-128, AES-256, BISS-1, BISS-E). Wpisz ręcznie lub "none".'],
             ['status', 'Status', 'select', ['active', 'inactive', 'error', 'standby']],
-          ] as [keyof Stream, string, string, string[]?][]).map(([key, label, type, opts]) => (
+          ] as [keyof Stream, string, string, string[]?, string?][]).map(([key, label, type, opts, hint]) => (
             <div key={key}>
-              <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
+              <label className="flex items-center gap-1 text-xs font-medium text-gray-700 mb-1">
+                {label}{hint && <FieldHint text={hint} />}
+              </label>
               {type === 'select' ? (
                 <select value={String(editing[key] ?? '')} onChange={e => f(key, e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">

@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Plus, Pencil, Trash2, MapPin, Zap, Clock } from 'lucide-react';
 import StatusBadge from '@/components/StatusBadge';
 import Modal from '@/components/Modal';
+import FieldHint from '@/components/FieldHint';
 
 interface SFNNode {
   id: number; mux_id: number; mux_name: string; name: string; location: string;
@@ -152,15 +153,22 @@ export default function SFNPage() {
             </select>
           </div>
           {([
-            ['name', 'Nazwa węzła', 'text'], ['location', 'Lokalizacja', 'text'],
-            ['latitude', 'Szerokość geogr. (N)', 'number'], ['longitude', 'Długość geogr. (E)', 'number'],
-            ['power_w', 'Moc (W)', 'number'], ['antenna_height_m', 'Wysokość anteny (m)', 'number'],
-            ['frequency_mhz', 'Częstotliwość (MHz)', 'number'], ['delay_us', 'Opóźnienie (µs)', 'number'],
-            ['mip_enabled', 'MIP', 'select', ['1', '0']], ['gps_sync', 'GPS sync', 'select', ['1', '0']],
+            ['name', 'Nazwa węzła', 'text'],
+            ['location', 'Lokalizacja', 'text'],
+            ['latitude', 'Szerokość geogr. (N)', 'number', undefined, 'Szerokość geograficzna nadajnika w stopniach dziesiętnych (np. 52.2297 dla Warszawy). Używana do wizualizacji i obliczeń zasięgu.'],
+            ['longitude', 'Długość geogr. (E)', 'number', undefined, 'Długość geograficzna nadajnika w stopniach dziesiętnych (np. 21.0122 dla Warszawy).'],
+            ['power_w', 'Moc (W)', 'number', undefined, 'Moc promieniowania zastępczego (ERP/EIRP) nadajnika w Watach. Wyznacza zasięg stacji nadawczej.'],
+            ['antenna_height_m', 'Wysokość anteny (m)', 'number', undefined, 'Wysokość zawieszenia anteny nadawczej nad poziomem terenu (AGL) w metrach. Wpływa na zasięg i pokrycie terenu.'],
+            ['frequency_mhz', 'Częstotliwość (MHz)', 'number', undefined, 'Częstotliwość RF nadajnika w MHz. Musi być identyczna we wszystkich węzłach tej sieci SFN.'],
+            ['delay_us', 'Opóźnienie (µs)', 'number', undefined, 'Sztuczne opóźnienie sygnału w mikrosekundach wyrównujące różnice propagacji między nadajnikami. Zapobiega powstawaniu ech — sygnały muszą nakładać się w oknie guard interval.'],
+            ['mip_enabled', 'MIP', 'select', ['1', '0'], 'Mega-frame Initialization Packet — specjalny pakiet TS niosący informację synchronizacji czasu dla sieci SFN (EN 300 468). Wymagany do prawidłowej synchronizacji nadajników.'],
+            ['gps_sync', 'GPS sync', 'select', ['1', '0'], 'Synchronizacja odniesienia czasu przez odbiornik GPS podłączony do nadajnika. Zapewnia dokładność < 1 µs, niezbędną dla poprawnego działania sieci SFN.'],
             ['status', 'Status', 'select', ['active', 'maintenance', 'inactive', 'alarm']],
-          ] as [keyof SFNNode, string, string, string[]?][]).map(([key, label, type, opts]) => (
+          ] as [keyof SFNNode, string, string, string[]?, string?][]).map(([key, label, type, opts, hint]) => (
             <div key={key}>
-              <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
+              <label className="flex items-center gap-1 text-xs font-medium text-gray-700 mb-1">
+                {label}{hint && <FieldHint text={hint} />}
+              </label>
               {type === 'select' ? (
                 <select value={String(editing[key] ?? '')} onChange={e => f(key, e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">

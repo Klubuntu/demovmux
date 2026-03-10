@@ -5,6 +5,7 @@ import { Plus, Radio, Tv2, GitBranch, Pencil, Trash2, Wifi } from 'lucide-react'
 import StatusBadge from '@/components/StatusBadge';
 import BitrateBar from '@/components/BitrateBar';
 import Modal from '@/components/Modal';
+import FieldHint from '@/components/FieldHint';
 
 interface Mux {
   id: number; name: string; number: number; standard: string; mux_type: string; radio_enabled: number; video_codec: string;
@@ -147,27 +148,32 @@ export default function MultipleksyPage() {
       <Modal title={isEdit ? `Edytuj ${editing.name}` : 'Nowy Multipleks'} open={modal} onClose={() => setModal(false)} size="xl">
         <div className="grid grid-cols-2 gap-4">
           {([
-            ['name', 'Nazwa', 'text'], ['number', 'Numer MUX', 'number'],
-            ['mux_type', 'Typ MUX', 'select', ['terrestrial', 'iptv', 'satellite', 'cable']],
-            ['radio_enabled', 'Obsługa radia (Icecast)', 'select', ['0', '1']],
-            ['standard', 'Standard', 'select', ['DVB-T2', 'DVB-T', 'IPTV', 'DVB-S2', 'DVB-C']],
-            ['video_codec', 'Kodek wideo', 'select', ['HEVC', 'MPEG-4', 'MPEG-2', 'H.264', 'H.265']],
-            ['modulation', 'Modulacja', 'select', ['256-QAM', '64-QAM', '16-QAM', 'QPSK', 'N/A']],
-            ['fft_mode', 'Tryb FFT', 'select', ['32k Extended', '32k', '16k', '8k', '4k', '2k', '1k', 'N/A']],
-            ['guard_interval', 'Odstęp ochronny', 'select', ['19/256', '19/128', '1/8', '1/4', '1/16', '1/32', '1/128', 'N/A']],
-            ['fec', 'FEC', 'select', ['1/2', '3/5', '2/3', '3/4', '4/5', '5/6', 'N/A']],
-            ['bandwidth_mhz', 'Szerokość kanału (MHz)', 'number'],
-            ['frequency_band', 'Pasmo', 'select', ['UHF', 'VHF']],
-            ['frequency_mhz', 'Częstotliwość (MHz)', 'number'],
-            ['channel_number', 'Numer kanału RF', 'number'],
-            ['polarization', 'Polaryzacja', 'select', ['H', 'V']],
-            ['network_id', 'Network ID', 'number'], ['ts_id', 'TS ID', 'number'], ['onid', 'ONID', 'number'],
-            ['total_bitrate_mbps', 'Max bitrate (Mbps)', 'number'],
-            ['sfn_enabled', 'SFN', 'select', ['1', '0']],
+            ['name', 'Nazwa', 'text'],
+            ['number', 'Numer MUX', 'number', undefined, 'Unikalny numer identyfikacyjny multipleksu w sieci DVB (np. 1–8 dla naziemnej).'],
+            ['mux_type', 'Typ MUX', 'select', ['terrestrial', 'iptv', 'satellite', 'cable'], 'terrestrial = naziemny DVB-T/T2 · iptv = platforma internetowa · satellite = satelitarny · cable = kablowy DVB-C'],
+            ['radio_enabled', 'Obsługa radia (Icecast)', 'select', ['0', '1'], 'Włącza możliwość dodania kanałów radiowych (audio-only) przesyłanych przez Icecast/Shoutcast do tego multipleksu.'],
+            ['standard', 'Standard', 'select', ['DVB-T2', 'DVB-T', 'IPTV', 'DVB-S2', 'DVB-C'], 'Norma transmisji cyfrowej. DVB-T2 to aktualny standard naziemny w Polsce (obowiązuje od 2022).'],
+            ['video_codec', 'Kodek wideo', 'select', ['HEVC', 'MPEG-4', 'MPEG-2', 'H.264', 'H.265'], 'HEVC (H.265) wymagany dla DVB-T2 w Polsce. MPEG-2 stosowany w starszych MUX-ach DVB-T.'],
+            ['modulation', 'Modulacja', 'select', ['256-QAM', '64-QAM', '16-QAM', 'QPSK', 'N/A'], '256-QAM = maksymalna przepływność, wymaga dobrego sygnału. 64-QAM = większa odporność na zakłócenia i szerszy zasięg.'],
+            ['fft_mode', 'Tryb FFT', 'select', ['32k Extended', '32k', '16k', '8k', '4k', '2k', '1k', 'N/A'], 'Rozmiar transformaty Fouriera dla OFDM. 32k = max pojemność i zasięg SFN (dłuższe symbole OFDM). Mniejsze wartości = mniejsze opóźnienie (mobilność).'],
+            ['guard_interval', 'Odstęp ochronny', 'select', ['19/256', '19/128', '1/8', '1/4', '1/16', '1/32', '1/128', 'N/A'], 'Przerwa między symbolami OFDM chroniąca przed echem wielodrożnym. 19/256 ≈ 58 µs — typowy wybór dla sieci SFN 8 MHz.'],
+            ['fec', 'FEC', 'select', ['1/2', '3/5', '2/3', '3/4', '4/5', '5/6', 'N/A'], 'Forward Error Correction — korekcja błędów. 2/3 = dobry kompromis odporność/przepływność. Niższy ułamek = lepsza ochrona, niższy bitrate.'],
+            ['bandwidth_mhz', 'Szerokość kanału (MHz)', 'number', undefined, 'Szerokość kanału RF w MHz. W Polsce standardowo 8 MHz (UHF). Niektóre kraje używają 7 lub 6 MHz.'],
+            ['frequency_band', 'Pasmo', 'select', ['UHF', 'VHF'], 'UHF (470–862 MHz) — standard DVB-T/T2 w Polsce. VHF stosowane w niektórych krajach dla dolnych multipleksów.'],
+            ['frequency_mhz', 'Częstotliwość (MHz)', 'number', undefined, 'Centralna częstotliwość kanału RF w MHz (np. 514 MHz to kanał 26 UHF).'],
+            ['channel_number', 'Numer kanału RF', 'number', undefined, 'Numer kanału UHF/VHF wg planu częstotliwości CEPT (UHF: 21–60). Jednoznacznie wyznacza częstotliwość środkową.'],
+            ['polarization', 'Polaryzacja', 'select', ['H', 'V'], 'Polaryzacja sygnału antenowego. H = pozioma (dominuje w Polsce), V = pionowa.'],
+            ['network_id', 'Network ID', 'number', undefined, 'NID: identyfikator sieci DVB (0–65535) wpisywany do tablicy NIT. W Polsce Emitel używa 8202.'],
+            ['ts_id', 'TS ID', 'number', undefined, 'Transport Stream ID — identyfikator strumienia TS w obrębie sieci. Musi być unikalny w ramach Network ID.'],
+            ['onid', 'ONID', 'number', undefined, 'Original Network ID — identyfikator sieci macierzystej, w której usługa została pierwotnie zdefiniowana. Zwykle równy Network ID.'],
+            ['total_bitrate_mbps', 'Max bitrate (Mbps)', 'number', undefined, 'Łączna przepływność strumienia TS w Mbit/s. Dla DVB-T2 8 MHz / 256-QAM / FEC 2/3 / FFT 32k / GI 19/256 wynosi ≈ 36.1 Mbps.'],
+            ['sfn_enabled', 'SFN', 'select', ['1', '0'], 'Single Frequency Network — synchronizacja wielu nadajników na tej samej częstotliwości. Wymaga pakietów MIP i synchronizacji GPS w każdym węźle.'],
             ['status', 'Status', 'select', ['active', 'maintenance', 'inactive']],
-          ] as [keyof Mux, string, string, string[]?][]).map(([key, label, type, opts]) => (
+          ] as [keyof Mux, string, string, string[]?, string?][]).map(([key, label, type, opts, hint]) => (
             <div key={key}>
-              <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
+              <label className="flex items-center gap-1 text-xs font-medium text-gray-700 mb-1">
+                {label}{hint && <FieldHint text={hint} />}
+              </label>
               {type === 'select' ? (
                 <select value={String(editing[key] ?? '')} onChange={e => f(key, e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
