@@ -94,6 +94,7 @@ export default function TablicePage() {
             <span className="text-sm font-semibold text-gray-900">{muxName}</span>
             <span className="text-xs text-gray-400">{rows.length} tablic</span>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-gray-400 border-b border-gray-100">
@@ -148,6 +149,7 @@ export default function TablicePage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ))}
       {tables.length === 0 && <div className="text-center py-16 text-gray-400">Brak danych PSI/SI</div>}

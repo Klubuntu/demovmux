@@ -82,6 +82,7 @@ export default function SFNPage() {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
@@ -140,6 +141,7 @@ export default function SFNPage() {
             ))}
           </tbody>
         </table>
+        </div>
         {nodes.length === 0 && <div className="text-center py-12 text-gray-400">Brak węzłów SFN</div>}
       </div>
 

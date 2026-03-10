@@ -1,8 +1,6 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import Sidebar from '@/components/Sidebar';
-import Header from '@/components/Header';
 import Modal from '@/components/Modal';
 import { CalendarDays, Clock, Plus, Pencil, Trash2, Wifi, Tv2 } from 'lucide-react';
 
@@ -168,12 +166,8 @@ export default function EpgPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <Sidebar />
-      <div className="flex-1 ml-60 flex flex-col min-h-screen">
-        <Header />
-        <main className="flex-1 p-6">
-          {/* Title */}
+    <div className="space-y-6">
+      {/* Title */}
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center">
@@ -318,9 +312,6 @@ export default function EpgPage() {
               </div>
             )}
           </div>
-        </main>
-      </div>
-
       {/* Modal */}
       <Modal
         open={showModal}

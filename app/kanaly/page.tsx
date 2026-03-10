@@ -5,8 +5,6 @@ import { Plus, Pencil, Trash2, Wifi, CalendarDays, Music } from 'lucide-react';
 import StatusBadge from '@/components/StatusBadge';
 import Modal from '@/components/Modal';
 import FieldHint from '@/components/FieldHint';
-import Sidebar from '@/components/Sidebar';
-import Header from '@/components/Header';
 
 interface Channel {
   id: number; mux_id: number; mux_name: string; mux_type: string;
@@ -85,12 +83,8 @@ export default function KanalyPage() {
   const f = (k: keyof Channel, v: string | number | null) => setEditing(p => ({ ...p, [k]: v }));
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <Sidebar />
-      <div className="flex-1 ml-60 flex flex-col min-h-screen">
-        <Header />
-        <main className="flex-1 p-6 space-y-5">
-          <div className="flex items-center justify-between">
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold text-gray-900">Kanały</h2>
               <p className="text-sm text-gray-500">Zarządzanie kanałami telewizyjnymi w multipleksach</p>
@@ -111,6 +105,7 @@ export default function KanalyPage() {
           </div>
 
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-gray-400 border-b border-gray-100 bg-gray-50">
@@ -192,6 +187,7 @@ export default function KanalyPage() {
                 ))}
               </tbody>
             </table>
+            </div>
             {channels.length === 0 && <div className="text-center py-12 text-gray-400">Brak kanałów</div>}
           </div>
 
@@ -372,8 +368,6 @@ export default function KanalyPage() {
               <button onClick={save} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Zapisz</button>
             </div>
           </Modal>
-        </main>
-      </div>
     </div>
   );
 }
