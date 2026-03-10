@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar";
-import Header from "@/components/Header";
+import AppShell from "@/components/AppShell";
 import SetupWizard from "@/components/SetupWizard";
 
 export const metadata: Metadata = {
@@ -18,13 +17,7 @@ export default function RootLayout({
     <html lang="pl">
       <body className="antialiased">
         <SetupWizard />
-        <Sidebar />
-        <Header />
-        <main className="ml-60 pt-14 min-h-screen">
-          <div className="p-6">
-            {children}
-          </div>
-        </main>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Radio, Tv2, Signal, GitBranch, BarChart2,
-  Table2, Bell, Settings, CalendarDays, X
+  Table2, Bell, Settings, CalendarDays, X, Gamepad2
 } from 'lucide-react';
 
 interface SidebarProps { open?: boolean; onClose?: () => void; }
@@ -18,6 +18,7 @@ const nav = [
   { href: '/monitoring', label: 'Monitoring', icon: BarChart2 },
   { href: '/tablice', label: 'Tablice PSI/SI', icon: Table2 },
   { href: '/zdarzenia', label: 'Zdarzenia / Logi', icon: Bell },
+  { href: '/emulator', label: 'Emulator', icon: Gamepad2 },
 ];
 
 export default function Sidebar({ open = false, onClose }: SidebarProps) {
