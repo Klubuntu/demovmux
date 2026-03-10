@@ -24,7 +24,7 @@ const nav = [
 export default function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   return (
-    <aside className={`fixed top-0 left-0 h-screen w-60 bg-white border-r border-gray-200 flex flex-col z-30 transition-transform duration-200 ${open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+    <aside className={`fixed top-0 left-0 h-screen w-60 bg-white border-r border-gray-200 flex flex-col z-50 transition-transform duration-200 ${open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
       <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
