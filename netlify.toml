@@ -1,0 +1,23 @@
+[build]
+  command   = "pnpm build"
+  publish   = ".next"
+
+[build.environment]
+  NODE_VERSION  = "20"
+  PNPM_VERSION  = "9"
+
+# Netlify Next.js runtime (Essential Next.js plugin)
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Redirect everything through the Next.js runtime
+[[redirects]]
+  from   = "/*"
+  to     = "/.netlify/functions/___netlify-handler"
+  status = 200
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment variables are set in Netlify UI → Site settings → Environment
+# or via `netlify env:set` CLI (see README).
+# DO NOT put secrets in this file.
+# ─────────────────────────────────────────────────────────────────────────────

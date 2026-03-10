@@ -1,17 +1,21 @@
-import Database from 'better-sqlite3';
+// better-sqlite3 is loaded lazily – only when the SQLite code path is taken.
+// This prevents native-addon load errors on Vercel/Netlify when using Postgres.
 import path from 'path';
 import fs from 'fs';
 import { Pool } from 'pg';
+import type Database_ from 'better-sqlite3';
+type SqliteDatabase = Database_.Database;
+type RunResult = Database_.RunResult;
 
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'vmux.db');
 
-let _db: Database.Database | null = null;
+let _db: SqliteDatabase | null = null;
 let _pool: Pool | null = null;
 let _client: DbClient | null = null;
 
 export type DbClient =
-  | { kind: 'sqlite'; db: Database.Database }
+  | { kind: 'sqlite'; db: SqliteDatabase }
   | { kind: 'postgres'; pool: Pool };
 
 type NamedParams = Record<string, unknown>;
@@ -28,14 +32,16 @@ function getDatabaseUrl(): string {
   return `file:${DB_PATH}`;
 }
 
-function createSqliteDbFromUrl(url: string): Database.Database {
+function createSqliteDbFromUrl(url: string): SqliteDatabase {
   if (_db) return _db;
 
   const filePath = url.replace(/^file:/, '');
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  _db = new Database(filePath);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const BetterSqlite3 = require('better-sqlite3') as typeof import('better-sqlite3');
+  _db = new BetterSqlite3(filePath) as SqliteDatabase;
   _db.pragma('journal_mode = WAL');
   _db.pragma('foreign_keys = ON');
   initSchema(_db);
@@ -50,6 +56,8 @@ function createPgPool(url: string): Pool {
   });
   return _pool;
 }
+
+let _pgSchemaInitialized = false;
 
 export function createDb(): DbClient {
   if (_client) return _client;
@@ -66,6 +74,205 @@ export function createDb(): DbClient {
   }
 
   throw new Error(`Unsupported DATABASE_URL scheme: ${url}`);
+}
+
+/** Must be called once before first query when using Postgres. */
+export async function ensurePgSchema(): Promise<void> {
+  const client = createDb();
+  if (client.kind !== 'postgres') return;
+  if (_pgSchemaInitialized) return;
+  _pgSchemaInitialized = true;
+  await initSchemaPostgres(client.pool);
+}
+
+async function initSchemaPostgres(pool: Pool): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS service_status (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','maintenance','blocked')),
+      message TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS multiplexes (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      number INTEGER NOT NULL UNIQUE,
+      standard TEXT NOT NULL DEFAULT 'DVB-T2',
+      video_codec TEXT NOT NULL DEFAULT 'HEVC',
+      modulation TEXT NOT NULL DEFAULT '256-QAM',
+      fft_mode TEXT NOT NULL DEFAULT '32k',
+      guard_interval TEXT NOT NULL DEFAULT '19/256',
+      fec TEXT NOT NULL DEFAULT '2/3',
+      bandwidth_mhz INTEGER NOT NULL DEFAULT 8,
+      frequency_band TEXT NOT NULL DEFAULT 'UHF',
+      frequency_mhz REAL,
+      channel_number INTEGER,
+      polarization TEXT NOT NULL DEFAULT 'H',
+      network_id INTEGER,
+      ts_id INTEGER,
+      onid INTEGER,
+      total_bitrate_mbps REAL NOT NULL DEFAULT 36.0,
+      sfn_enabled INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','maintenance','inactive')),
+      notes TEXT,
+      mux_type TEXT NOT NULL DEFAULT 'terrestrial',
+      radio_enabled INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS input_streams (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      broadcaster TEXT,
+      type TEXT NOT NULL DEFAULT 'fiber' CHECK (type IN ('fiber','satellite','microwave','ip_srt','ip_rist','backhaul','offair')),
+      protocol TEXT,
+      source_address TEXT,
+      source_port INTEGER,
+      bitrate_mbps REAL,
+      redundancy_mode TEXT DEFAULT 'none' CHECK (redundancy_mode IN ('none','backup','primary')),
+      redundancy_partner_id INTEGER REFERENCES input_streams(id),
+      encryption TEXT DEFAULT 'none',
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','error','standby')),
+      last_seen_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS channels (
+      id SERIAL PRIMARY KEY,
+      mux_id INTEGER NOT NULL REFERENCES multiplexes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      short_name TEXT,
+      lcn INTEGER,
+      service_id INTEGER,
+      pmt_pid INTEGER,
+      video_pid INTEGER,
+      audio_pid INTEGER,
+      pcr_pid INTEGER,
+      video_format TEXT DEFAULT 'HD',
+      video_bitrate_mbps REAL,
+      audio_bitrate_kbps REAL DEFAULT 128,
+      statmux_weight INTEGER DEFAULT 50,
+      statmux_min_mbps REAL DEFAULT 1.0,
+      statmux_max_mbps REAL DEFAULT 8.0,
+      hbbtv_enabled INTEGER DEFAULT 0,
+      hbbtv_url TEXT,
+      teletext_enabled INTEGER DEFAULT 1,
+      ssu_enabled INTEGER DEFAULT 0,
+      input_stream_id INTEGER REFERENCES input_streams(id),
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','error')),
+      stream_url TEXT,
+      stream_type TEXT DEFAULT 'hls',
+      epg_source_url TEXT,
+      epg_channel_id TEXT,
+      channel_type TEXT NOT NULL DEFAULT 'tv',
+      audio_codec TEXT DEFAULT 'AAC',
+      sample_rate_hz INTEGER DEFAULT 48000,
+      stereo_mode TEXT DEFAULT 'stereo',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sfn_nodes (
+      id SERIAL PRIMARY KEY,
+      mux_id INTEGER NOT NULL REFERENCES multiplexes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      location TEXT,
+      latitude REAL,
+      longitude REAL,
+      power_w REAL,
+      antenna_height_m REAL,
+      frequency_mhz REAL,
+      mip_enabled INTEGER DEFAULT 1,
+      gps_sync INTEGER DEFAULT 1,
+      delay_us REAL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','maintenance','inactive','alarm')),
+      last_sync_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS psi_si_tables (
+      id SERIAL PRIMARY KEY,
+      mux_id INTEGER NOT NULL REFERENCES multiplexes(id) ON DELETE CASCADE,
+      table_type TEXT NOT NULL CHECK (table_type IN ('PAT','PMT','NIT','SDT','EIT','TDT','TOT','AIT','MIP','BAT')),
+      pid INTEGER,
+      version INTEGER DEFAULT 0,
+      cycle_ms INTEGER DEFAULT 500,
+      enabled INTEGER DEFAULT 1,
+      payload_json TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id SERIAL PRIMARY KEY,
+      severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info','warning','error','critical')),
+      source TEXT,
+      mux_id INTEGER REFERENCES multiplexes(id),
+      channel_id INTEGER REFERENCES channels(id),
+      sfn_node_id INTEGER REFERENCES sfn_nodes(id),
+      message TEXT NOT NULL,
+      details TEXT,
+      resolved INTEGER DEFAULT 0,
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS statmux_snapshots (
+      id SERIAL PRIMARY KEY,
+      mux_id INTEGER NOT NULL REFERENCES multiplexes(id),
+      snapshot_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      total_bitrate_mbps REAL,
+      channels_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS epg_programs (
+      id SERIAL PRIMARY KEY,
+      channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      start_at TIMESTAMPTZ NOT NULL,
+      end_at TIMESTAMPTZ NOT NULL,
+      category TEXT,
+      language TEXT DEFAULT 'pl',
+      episode_num TEXT,
+      series_id TEXT,
+      rating TEXT,
+      poster_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_events_mux ON events(mux_id);
+    CREATE INDEX IF NOT EXISTS idx_channels_mux ON channels(mux_id);
+    CREATE INDEX IF NOT EXISTS idx_sfn_mux ON sfn_nodes(mux_id);
+    CREATE INDEX IF NOT EXISTS idx_statmux_mux ON statmux_snapshots(mux_id, snapshot_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_epg_channel ON epg_programs(channel_id, start_at);
+    CREATE INDEX IF NOT EXISTS idx_epg_date ON epg_programs(start_at);
+  `);
+}
+
+/** Returns true if the multiplexes table is empty (DB needs seeding). */
+export async function isDbEmpty(): Promise<boolean> {
+  await ensurePgSchema();
+  const row = await dbGet<{ c: number | string }>('SELECT COUNT(*) as c FROM multiplexes');
+  return Number(row?.c ?? 0) === 0;
+}
+
+/** Seed all example data into both SQLite and Postgres. */
+export async function seedDemoData(): Promise<void> {
+  const client = createDb();
+  if (client.kind === 'sqlite') {
+    seedData(client.db);
+    seedIptvIfNeeded(client.db);
+    seedEpgIfNeeded(client.db);
+    seedRadioIfNeeded(client.db);
+    return;
+  }
+  await seedDataAsync();
 }
 
 function rewriteSqlForPostgres(sql: string): string {
@@ -112,6 +319,7 @@ function withReturningId(sql: string): string {
 }
 
 export async function dbAll<T = unknown>(sql: string, params?: QueryParams): Promise<T[]> {
+  await ensurePgSchema();
   const client = createDb();
   if (client.kind === 'sqlite') {
     const stmt = client.db.prepare(sql);
@@ -135,10 +343,11 @@ export async function dbRun(
   sql: string,
   params?: QueryParams,
 ): Promise<{ changes: number; lastInsertRowid?: number | string }> {
+  await ensurePgSchema();
   const client = createDb();
   if (client.kind === 'sqlite') {
     const stmt = client.db.prepare(sql);
-    let info: Database.RunResult;
+    let info: RunResult;
     if (Array.isArray(params)) info = stmt.run(...params);
     else if (params && typeof params === 'object') info = stmt.run(params as NamedParams);
     else if (typeof params !== 'undefined') info = stmt.run(params);
@@ -166,7 +375,7 @@ export async function healthcheck(): Promise<boolean> {
   return res.rows[0]?.ok === 1;
 }
 
-export function getDb(): Database.Database {
+export function getDb(): SqliteDatabase {
   const client = createDb();
   if (client.kind !== 'sqlite') {
     throw new Error('getDb() supports only sqlite. Use dbGet/dbAll/dbRun for database-agnostic access.');
@@ -174,7 +383,7 @@ export function getDb(): Database.Database {
   return client.db;
 }
 
-function initSchema(db: Database.Database) {
+function initSchema(db: SqliteDatabase) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS service_status (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -343,7 +552,7 @@ function initSchema(db: Database.Database) {
   seedRadioIfNeeded(db);
 }
 
-function seedData(db: Database.Database) {
+function seedData(db: SqliteDatabase) {
   db.prepare(`INSERT INTO service_status (id, status, message) VALUES (1, 'active', 'Wirtualny multiplekser działa poprawnie')`).run();
 
   const muxes = [
@@ -477,7 +686,7 @@ function seedData(db: Database.Database) {
 }
 
 // ─── Migrations ──────────────────────────────────────────────────────────────
-function runMigrations(db: Database.Database) {
+function runMigrations(db: SqliteDatabase) {
   const safe = (sql: string) => { try { db.exec(sql); } catch { /* already exists */ } };
   // multiplexes
   safe(`ALTER TABLE multiplexes ADD COLUMN mux_type TEXT NOT NULL DEFAULT 'terrestrial'`);
@@ -495,7 +704,7 @@ function runMigrations(db: Database.Database) {
 }
 
 // ─── IPTV seed (idempotent) ───────────────────────────────────────────────────
-function seedIptvIfNeeded(db: Database.Database) {
+function seedIptvIfNeeded(db: SqliteDatabase) {
   const existing = db.prepare('SELECT id FROM multiplexes WHERE number=10').get();
   if (existing) return;
 
@@ -547,7 +756,7 @@ function seedIptvIfNeeded(db: Database.Database) {
 }
 
 // ─── EPG seed (idempotent) ────────────────────────────────────────────────────
-function seedEpgIfNeeded(db: Database.Database) {
+function seedEpgIfNeeded(db: SqliteDatabase) {
   const count = (db.prepare('SELECT COUNT(*) as c FROM epg_programs').get() as { c: number }).c;
   if (count > 0) return;
 
@@ -689,7 +898,7 @@ function seedEpgIfNeeded(db: Database.Database) {
 }
 
 // ─── Radio seed (idempotent) ──────────────────────────────────────────────────
-function seedRadioIfNeeded(db: Database.Database) {
+function seedRadioIfNeeded(db: SqliteDatabase) {
   const existing = db.prepare('SELECT id FROM multiplexes WHERE number=11').get();
   if (existing) return;
 
@@ -759,4 +968,129 @@ function seedRadioIfNeeded(db: Database.Database) {
   ];
 
   for (const c of radioChannels) ins.run(c);
+}
+
+// ─── Async seed for Postgres ──────────────────────────────────────────────────
+async function seedDataAsync(): Promise<void> {
+  // service_status
+  await dbRun(`INSERT INTO service_status (id, status, message) VALUES (1, 'active', 'Wirtualny multiplekser działa poprawnie') ON CONFLICT (id) DO NOTHING`);
+
+  const muxes = [
+    { number: 1, name: 'MUX 1', standard: 'DVB-T2', video_codec: 'HEVC', modulation: '256-QAM', fft_mode: '32k Extended', guard_interval: '19/256', fec: '2/3', bandwidth_mhz: 8, frequency_band: 'UHF', frequency_mhz: 514, channel_number: 26, polarization: 'H', network_id: 8202, ts_id: 1001, onid: 8202, total_bitrate_mbps: 36.1, sfn_enabled: 1, status: 'active', notes: 'TVP – kanały publiczne' },
+    { number: 2, name: 'MUX 2', standard: 'DVB-T2', video_codec: 'HEVC', modulation: '256-QAM', fft_mode: '32k Extended', guard_interval: '19/256', fec: '2/3', bandwidth_mhz: 8, frequency_band: 'UHF', frequency_mhz: 530, channel_number: 28, polarization: 'H', network_id: 8202, ts_id: 1002, onid: 8202, total_bitrate_mbps: 36.1, sfn_enabled: 1, status: 'active', notes: 'Polsat, TVN – komercyjne' },
+    { number: 3, name: 'MUX 3', standard: 'DVB-T2', video_codec: 'HEVC', modulation: '256-QAM', fft_mode: '32k Extended', guard_interval: '1/8', fec: '3/4', bandwidth_mhz: 8, frequency_band: 'UHF', frequency_mhz: 546, channel_number: 30, polarization: 'H', network_id: 8202, ts_id: 1003, onid: 8202, total_bitrate_mbps: 40.5, sfn_enabled: 1, status: 'active', notes: 'Kanały tematyczne' },
+    { number: 4, name: 'MUX 4', standard: 'DVB-T2', video_codec: 'HEVC', modulation: '256-QAM', fft_mode: '32k Extended', guard_interval: '1/8', fec: '3/4', bandwidth_mhz: 8, frequency_band: 'UHF', frequency_mhz: 562, channel_number: 32, polarization: 'H', network_id: 8202, ts_id: 1004, onid: 8202, total_bitrate_mbps: 40.5, sfn_enabled: 1, status: 'active', notes: 'Kanały HD Premium' },
+    { number: 6, name: 'MUX 6', standard: 'DVB-T2', video_codec: 'HEVC', modulation: '256-QAM', fft_mode: '32k Extended', guard_interval: '19/256', fec: '2/3', bandwidth_mhz: 8, frequency_band: 'UHF', frequency_mhz: 610, channel_number: 38, polarization: 'H', network_id: 8202, ts_id: 1006, onid: 8202, total_bitrate_mbps: 36.1, sfn_enabled: 1, status: 'maintenance', notes: 'Kanały regionalne' },
+    { number: 8, name: 'MUX 8', standard: 'DVB-T', video_codec: 'MPEG-4', modulation: '64-QAM', fft_mode: '8k', guard_interval: '1/4', fec: '3/4', bandwidth_mhz: 7, frequency_band: 'VHF', frequency_mhz: 202, channel_number: 10, polarization: 'V', network_id: 8202, ts_id: 1008, onid: 8202, total_bitrate_mbps: 14.9, sfn_enabled: 0, status: 'active', notes: 'Pasmo VHF – starszy standard DVB-T/MPEG-4' },
+    { number: 10, name: 'IPTV Stream', standard: 'IPTV', video_codec: 'HEVC', modulation: 'N/A', fft_mode: 'N/A', guard_interval: 'N/A', fec: 'N/A', bandwidth_mhz: 0, frequency_band: 'IP', frequency_mhz: 0, channel_number: 0, polarization: 'N/A', network_id: null, ts_id: null, onid: null, total_bitrate_mbps: 100, sfn_enabled: 0, status: 'active', notes: 'Wirtualny multipleks IPTV – odbiór strumieni HLS/RTMP/SRT/DASH' },
+    { number: 11, name: 'Radio IP (Icecast)', standard: 'IP', video_codec: 'N/A', modulation: 'N/A', fft_mode: 'N/A', guard_interval: 'N/A', fec: 'N/A', bandwidth_mhz: 0, frequency_band: 'IP', frequency_mhz: 0, channel_number: 0, polarization: 'N/A', network_id: null, ts_id: null, onid: null, total_bitrate_mbps: 10, sfn_enabled: 0, status: 'active', notes: 'Kanały radiowe – strumienie Icecast/Shoutcast/HLS-audio' },
+  ];
+  const muxIds: Record<number, number> = {};
+  for (const m of muxes) {
+    const r = await dbRun(
+      `INSERT INTO multiplexes (name,number,standard,video_codec,modulation,fft_mode,guard_interval,fec,bandwidth_mhz,frequency_band,frequency_mhz,channel_number,polarization,network_id,ts_id,onid,total_bitrate_mbps,sfn_enabled,status,notes)
+       VALUES (@name,@number,@standard,@video_codec,@modulation,@fft_mode,@guard_interval,@fec,@bandwidth_mhz,@frequency_band,@frequency_mhz,@channel_number,@polarization,@network_id,@ts_id,@onid,@total_bitrate_mbps,@sfn_enabled,@status,@notes)`,
+      m as unknown as NamedParams
+    );
+    muxIds[m.number] = r.lastInsertRowid as number;
+  }
+
+  const streams = [
+    { name: 'TVP Fiber Primary', broadcaster: 'TVP S.A.', type: 'fiber', protocol: 'ASI/SDI', source_address: '10.10.1.10', source_port: 5004, bitrate_mbps: 120, redundancy_mode: 'primary', encryption: 'none', status: 'active' },
+    { name: 'TVP Fiber Backup', broadcaster: 'TVP S.A.', type: 'fiber', protocol: 'ASI/SDI', source_address: '10.10.1.11', source_port: 5004, bitrate_mbps: 120, redundancy_mode: 'backup', encryption: 'none', status: 'standby' },
+    { name: 'Polsat IP/SRT', broadcaster: 'Polsat S.A.', type: 'ip_srt', protocol: 'SRT', source_address: '195.117.20.5', source_port: 9000, bitrate_mbps: 50, redundancy_mode: 'primary', encryption: 'AES-128', status: 'active' },
+    { name: 'TVN SDI Fiber', broadcaster: 'TVN S.A.', type: 'fiber', protocol: 'SDI', source_address: '10.10.2.5', source_port: 5004, bitrate_mbps: 80, redundancy_mode: 'primary', encryption: 'none', status: 'active' },
+    { name: 'Eutelsat Downlink', broadcaster: 'Various', type: 'satellite', protocol: 'DVB-S2', source_address: '13.0E Eutelsat 13B', source_port: null, bitrate_mbps: 40, redundancy_mode: 'backup', encryption: 'PowerVu', status: 'active' },
+    { name: 'Hot Bird Downlink', broadcaster: 'Various', type: 'satellite', protocol: 'DVB-S2', source_address: '13.0E Hot Bird 13B', source_port: null, bitrate_mbps: 35, redundancy_mode: 'backup', encryption: 'none', status: 'active' },
+    { name: 'Backhaul WAN-WA01', broadcaster: 'Internal', type: 'backhaul', protocol: 'IP Multicast', source_address: '239.10.1.1', source_port: 1234, bitrate_mbps: 200, redundancy_mode: 'primary', encryption: 'none', status: 'active' },
+    { name: 'Mikrofalowa Katowice', broadcaster: 'Internal', type: 'microwave', protocol: 'E1/IP', source_address: '172.16.5.2', source_port: null, bitrate_mbps: 34, redundancy_mode: 'backup', encryption: 'none', status: 'active' },
+    { name: 'Off-Air Retransmisja Krakow', broadcaster: 'Internal', type: 'offair', protocol: 'DVB-T2', source_address: 'RF CH26 514MHz', source_port: null, bitrate_mbps: 36, redundancy_mode: 'none', encryption: 'none', status: 'active' },
+    { name: 'Canal+ SRT', broadcaster: 'Canal+ Polska', type: 'ip_srt', protocol: 'SRT', source_address: '82.145.20.11', source_port: 9010, bitrate_mbps: 30, redundancy_mode: 'primary', encryption: 'AES-256', status: 'active' },
+  ];
+  const streamIds: number[] = [];
+  for (const s of streams) {
+    const r = await dbRun(
+      `INSERT INTO input_streams (name,broadcaster,type,protocol,source_address,source_port,bitrate_mbps,redundancy_mode,encryption,status)
+       VALUES (@name,@broadcaster,@type,@protocol,@source_address,@source_port,@bitrate_mbps,@redundancy_mode,@encryption,@status)`,
+      s as unknown as NamedParams
+    );
+    streamIds.push(r.lastInsertRowid as number);
+  }
+  const sid1 = streamIds[0], sid3 = streamIds[2], sid4 = streamIds[3], sid7 = streamIds[6];
+
+  type Ch = Record<string, unknown>;
+  const allChannels: Ch[] = [
+    // MUX 1
+    { mux_id: muxIds[1], name: 'TVP1 HD', short_name: 'TVP1', lcn: 1, service_id: 101, pmt_pid: 4096, video_pid: 4097, audio_pid: 4098, pcr_pid: 4097, video_format: 'HD 1080i', video_bitrate_mbps: 6.5, audio_bitrate_kbps: 192, statmux_weight: 80, statmux_min_mbps: 4.0, statmux_max_mbps: 10.0, hbbtv_enabled: 1, hbbtv_url: 'https://hbbtv.tvp.pl/tvp1', teletext_enabled: 1, input_stream_id: sid1, status: 'active' },
+    { mux_id: muxIds[1], name: 'TVP2 HD', short_name: 'TVP2', lcn: 2, service_id: 102, pmt_pid: 4100, video_pid: 4101, audio_pid: 4102, pcr_pid: 4101, video_format: 'HD 1080i', video_bitrate_mbps: 5.5, audio_bitrate_kbps: 192, statmux_weight: 70, statmux_min_mbps: 3.5, statmux_max_mbps: 9.0, hbbtv_enabled: 1, hbbtv_url: 'https://hbbtv.tvp.pl/tvp2', teletext_enabled: 1, input_stream_id: sid1, status: 'active' },
+    { mux_id: muxIds[1], name: 'TVP3 Reg.', short_name: 'TVP3', lcn: 3, service_id: 103, pmt_pid: 4104, video_pid: 4105, audio_pid: 4106, pcr_pid: 4105, video_format: 'HD 720p', video_bitrate_mbps: 4.0, audio_bitrate_kbps: 128, statmux_weight: 50, statmux_min_mbps: 2.0, statmux_max_mbps: 7.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 1, input_stream_id: sid7, status: 'active' },
+    { mux_id: muxIds[1], name: 'TVP Info HD', short_name: 'TVPInfo', lcn: 4, service_id: 104, pmt_pid: 4108, video_pid: 4109, audio_pid: 4110, pcr_pid: 4109, video_format: 'HD 720p', video_bitrate_mbps: 3.5, audio_bitrate_kbps: 128, statmux_weight: 40, statmux_min_mbps: 1.5, statmux_max_mbps: 6.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 0, input_stream_id: sid1, status: 'active' },
+    { mux_id: muxIds[1], name: 'TVP Sport HD', short_name: 'TVPSport', lcn: 5, service_id: 105, pmt_pid: 4112, video_pid: 4113, audio_pid: 4114, pcr_pid: 4113, video_format: 'HD 1080i', video_bitrate_mbps: 7.0, audio_bitrate_kbps: 192, statmux_weight: 90, statmux_min_mbps: 4.5, statmux_max_mbps: 12.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 0, input_stream_id: sid1, status: 'active' },
+    // MUX 2
+    { mux_id: muxIds[2], name: 'Polsat HD', short_name: 'Polsat', lcn: 6, service_id: 201, pmt_pid: 5100, video_pid: 5101, audio_pid: 5102, pcr_pid: 5101, video_format: 'HD 1080i', video_bitrate_mbps: 6.0, audio_bitrate_kbps: 192, statmux_weight: 80, statmux_min_mbps: 4.0, statmux_max_mbps: 10.0, hbbtv_enabled: 1, hbbtv_url: 'https://hbbtv.polsat.pl', teletext_enabled: 0, input_stream_id: sid3, status: 'active' },
+    { mux_id: muxIds[2], name: 'TVN HD', short_name: 'TVN', lcn: 7, service_id: 202, pmt_pid: 5104, video_pid: 5105, audio_pid: 5106, pcr_pid: 5105, video_format: 'HD 1080i', video_bitrate_mbps: 5.5, audio_bitrate_kbps: 192, statmux_weight: 75, statmux_min_mbps: 3.5, statmux_max_mbps: 9.0, hbbtv_enabled: 1, hbbtv_url: 'https://hbbtv.tvn.pl', teletext_enabled: 0, input_stream_id: sid4, status: 'active' },
+    { mux_id: muxIds[2], name: 'Polsat 2 HD', short_name: 'Polsat2', lcn: 8, service_id: 203, pmt_pid: 5108, video_pid: 5109, audio_pid: 5110, pcr_pid: 5109, video_format: 'HD 720p', video_bitrate_mbps: 4.5, audio_bitrate_kbps: 128, statmux_weight: 60, statmux_min_mbps: 2.5, statmux_max_mbps: 7.5, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 0, input_stream_id: sid3, status: 'active' },
+    { mux_id: muxIds[2], name: 'TVN 7 HD', short_name: 'TVN7', lcn: 9, service_id: 204, pmt_pid: 5112, video_pid: 5113, audio_pid: 5114, pcr_pid: 5113, video_format: 'HD 720p', video_bitrate_mbps: 4.0, audio_bitrate_kbps: 128, statmux_weight: 55, statmux_min_mbps: 2.0, statmux_max_mbps: 7.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 0, input_stream_id: sid4, status: 'active' },
+    // MUX 3
+    { mux_id: muxIds[3], name: 'TVP Kultura HD', short_name: 'TVPKult', lcn: 16, service_id: 301, pmt_pid: 6100, video_pid: 6101, audio_pid: 6102, pcr_pid: 6101, video_format: 'HD 720p', video_bitrate_mbps: 4.0, audio_bitrate_kbps: 128, statmux_weight: 50, statmux_min_mbps: 2.0, statmux_max_mbps: 7.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 1, input_stream_id: sid1, status: 'active' },
+    { mux_id: muxIds[3], name: 'TVN24 HD', short_name: 'TVN24', lcn: 20, service_id: 305, pmt_pid: 6116, video_pid: 6117, audio_pid: 6118, pcr_pid: 6117, video_format: 'HD 720p', video_bitrate_mbps: 4.0, audio_bitrate_kbps: 128, statmux_weight: 55, statmux_min_mbps: 2.0, statmux_max_mbps: 7.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 0, input_stream_id: sid4, status: 'active' },
+    // MUX 8 (number=8, index 6)
+    { mux_id: muxIds[8], name: 'TVP1', short_name: 'TVP1', lcn: 11, service_id: 801, pmt_pid: 8100, video_pid: 8101, audio_pid: 8102, pcr_pid: 8101, video_format: 'SD 576i', video_bitrate_mbps: 2.5, audio_bitrate_kbps: 128, statmux_weight: 60, statmux_min_mbps: 1.5, statmux_max_mbps: 4.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 1, input_stream_id: sid1, status: 'active' },
+    { mux_id: muxIds[8], name: 'TVP2', short_name: 'TVP2', lcn: 12, service_id: 802, pmt_pid: 8104, video_pid: 8105, audio_pid: 8106, pcr_pid: 8105, video_format: 'SD 576i', video_bitrate_mbps: 2.5, audio_bitrate_kbps: 128, statmux_weight: 60, statmux_min_mbps: 1.5, statmux_max_mbps: 4.0, hbbtv_enabled: 0, hbbtv_url: null, teletext_enabled: 1, input_stream_id: sid1, status: 'active' },
+    // IPTV
+    { mux_id: muxIds[10], name: 'TVP1 Online HD', short_name: 'TVP1', lcn: 101, service_id: 9001, pmt_pid: 0x101, video_pid: 0x111, audio_pid: 0x121, pcr_pid: 0x111, video_format: 'H.264 HD', video_bitrate_mbps: 4.5, audio_bitrate_kbps: 192, statmux_weight: 50, statmux_min_mbps: 1.5, statmux_max_mbps: 8.0, hbbtv_enabled: 0, teletext_enabled: 0, ssu_enabled: 0, input_stream_id: null, status: 'active', stream_url: 'https://hls.nadawca.pl/live/tvp1-hd/index.m3u8', stream_type: 'hls', epg_channel_id: 'tvp1.pl' },
+    { mux_id: muxIds[10], name: 'Polsat Online HD', short_name: 'POLS', lcn: 103, service_id: 9003, pmt_pid: 0x103, video_pid: 0x113, audio_pid: 0x123, pcr_pid: 0x113, video_format: 'H.264 HD', video_bitrate_mbps: 4.5, audio_bitrate_kbps: 192, statmux_weight: 50, statmux_min_mbps: 1.5, statmux_max_mbps: 8.0, hbbtv_enabled: 0, teletext_enabled: 0, ssu_enabled: 0, input_stream_id: null, status: 'active', stream_url: 'rtmp://live.rtmp.nadawca.pl/live/polsat-hd', stream_type: 'rtmp', epg_channel_id: 'polsat.pl' },
+    // Radio
+    { mux_id: muxIds[11], name: 'Polskie Radio 1', short_name: 'PR1', lcn: 201, service_id: 9101, pmt_pid: 0x201, video_pid: 0, audio_pid: 0x211, pcr_pid: 0x211, video_format: 'N/A', video_bitrate_mbps: 0, audio_bitrate_kbps: 192, statmux_weight: 20, statmux_min_mbps: 0.064, statmux_max_mbps: 0.32, hbbtv_enabled: 0, teletext_enabled: 0, ssu_enabled: 0, input_stream_id: null, status: 'active', channel_type: 'radio', audio_codec: 'MP3', sample_rate_hz: 44100, stereo_mode: 'stereo', stream_url: 'https://stream.polskieradio.pl/pr1/mp3', stream_type: 'icecast', epg_channel_id: 'pr1.pl' },
+    { mux_id: muxIds[11], name: 'RMF FM', short_name: 'RMF', lcn: 206, service_id: 9106, pmt_pid: 0x206, video_pid: 0, audio_pid: 0x216, pcr_pid: 0x216, video_format: 'N/A', video_bitrate_mbps: 0, audio_bitrate_kbps: 192, statmux_weight: 20, statmux_min_mbps: 0.064, statmux_max_mbps: 0.32, hbbtv_enabled: 0, teletext_enabled: 0, ssu_enabled: 0, input_stream_id: null, status: 'active', channel_type: 'radio', audio_codec: 'AAC', sample_rate_hz: 48000, stereo_mode: 'stereo', stream_url: 'https://rs101-krk.rmfstream.pl/RMFFM48', stream_type: 'icecast', epg_channel_id: 'rmf.fm' },
+  ];
+
+  for (const c of allChannels) {
+    await dbRun(
+      `INSERT INTO channels (mux_id,name,short_name,lcn,service_id,pmt_pid,video_pid,audio_pid,pcr_pid,video_format,video_bitrate_mbps,audio_bitrate_kbps,statmux_weight,statmux_min_mbps,statmux_max_mbps,hbbtv_enabled,hbbtv_url,teletext_enabled,ssu_enabled,input_stream_id,status,stream_url,stream_type,epg_channel_id,channel_type,audio_codec,sample_rate_hz,stereo_mode)
+       VALUES (@mux_id,@name,@short_name,@lcn,@service_id,@pmt_pid,@video_pid,@audio_pid,@pcr_pid,@video_format,@video_bitrate_mbps,@audio_bitrate_kbps,@statmux_weight,@statmux_min_mbps,@statmux_max_mbps,@hbbtv_enabled,@hbbtv_url,@teletext_enabled,@ssu_enabled,@input_stream_id,@status,@stream_url,@stream_type,@epg_channel_id,@channel_type,@audio_codec,@sample_rate_hz,@stereo_mode)`,
+      { channel_type: 'tv', audio_codec: 'AAC', sample_rate_hz: 48000, stereo_mode: 'stereo', ssu_enabled: 0, stream_url: null, stream_type: 'hls', epg_channel_id: null, hbbtv_url: null, ...c }
+    );
+  }
+
+  // SFN nodes
+  const sfnNodes = [
+    { mux_id: muxIds[1], name: 'Warszawa Raszyn', location: 'Raszyn k. Warszawy', latitude: 52.12, longitude: 20.91, power_w: 10000, antenna_height_m: 335, frequency_mhz: 514, mip_enabled: 1, gps_sync: 1, delay_us: 0, status: 'active' },
+    { mux_id: muxIds[1], name: 'Krakow Choragwica', location: 'Choragwica, Malopolska', latitude: 49.95, longitude: 20.0, power_w: 8000, antenna_height_m: 280, frequency_mhz: 514, mip_enabled: 1, gps_sync: 1, delay_us: 12.4, status: 'active' },
+    { mux_id: muxIds[1], name: 'Lodz Kolumna', location: 'Kolumna, Lodz', latitude: 51.61, longitude: 19.46, power_w: 3000, antenna_height_m: 190, frequency_mhz: 514, mip_enabled: 1, gps_sync: 1, delay_us: 5.2, status: 'alarm' },
+    { mux_id: muxIds[2], name: 'Warszawa Raszyn', location: 'Raszyn k. Warszawy', latitude: 52.12, longitude: 20.91, power_w: 10000, antenna_height_m: 335, frequency_mhz: 530, mip_enabled: 1, gps_sync: 1, delay_us: 0, status: 'active' },
+    { mux_id: muxIds[2], name: 'Katowice Kosztowy', location: 'Kosztowy, Slask', latitude: 50.15, longitude: 18.98, power_w: 7500, antenna_height_m: 260, frequency_mhz: 530, mip_enabled: 1, gps_sync: 1, delay_us: 10.3, status: 'maintenance' },
+  ];
+  for (const n of sfnNodes) {
+    await dbRun(
+      `INSERT INTO sfn_nodes (mux_id,name,location,latitude,longitude,power_w,antenna_height_m,frequency_mhz,mip_enabled,gps_sync,delay_us,status)
+       VALUES (@mux_id,@name,@location,@latitude,@longitude,@power_w,@antenna_height_m,@frequency_mhz,@mip_enabled,@gps_sync,@delay_us,@status)`,
+      n as unknown as NamedParams
+    );
+  }
+
+  // Events
+  const events = [
+    { severity: 'info', source: 'System', mux_id: null, message: 'Wirtualny multiplekser uruchomiony pomyslnie', details: 'Inicjalizacja bazy danych zakonczona', resolved: 1 },
+    { severity: 'warning', source: 'SFN Monitor', mux_id: muxIds[1], message: 'Wezel SFN Lodz Kolumna – utrata synchronizacji GPS', details: 'GPS lock lost for 3 minutes. Fallback to internal oscillator.', resolved: 0 },
+    { severity: 'error', source: 'Input Monitor', mux_id: null, message: 'Przerwa strumienia wejsciowego: TVP Fiber Primary', details: 'Utrata sygalu na 45 sekund. Automatyczne przelaczenie na backup.', resolved: 1 },
+    { severity: 'warning', source: 'Input Monitor', mux_id: muxIds[2], message: 'Wysoki jitter na strumieniu Polsat IP/SRT', details: 'Jitter: 45ms (prog: 30ms). Sprawdz polaczenie IP.', resolved: 0 },
+  ];
+  for (const e of events) {
+    await dbRun(
+      `INSERT INTO events (severity,source,mux_id,message,details,resolved) VALUES (@severity,@source,@mux_id,@message,@details,@resolved)`,
+      e as unknown as NamedParams
+    );
+  }
+
+  // Statmux snapshots
+  const now = Date.now();
+  for (let i = 0; i < 48; i++) {
+    const t = new Date(now - (47 - i) * 30 * 60 * 1000).toISOString();
+    const noise = () => (Math.random() - 0.5) * 4;
+    await dbRun(`INSERT INTO statmux_snapshots (mux_id,snapshot_at,total_bitrate_mbps,channels_json) VALUES (?,?,?,?)`,
+      [muxIds[1], t, parseFloat((35.5 + noise()).toFixed(2)), JSON.stringify({ tvp1: (6.5 + noise()).toFixed(2) })]);
+    await dbRun(`INSERT INTO statmux_snapshots (mux_id,snapshot_at,total_bitrate_mbps,channels_json) VALUES (?,?,?,?)`,
+      [muxIds[2], t, parseFloat((34.8 + noise()).toFixed(2)), JSON.stringify({ polsat: (6.0 + noise()).toFixed(2) })]);
+  }
 }

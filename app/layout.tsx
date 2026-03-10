@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
+import SetupWizard from "@/components/SetupWizard";
 
 export const metadata: Metadata = {
   title: "vMUX Panel – Wirtualny Multiplekser",
@@ -16,6 +17,7 @@ export default function RootLayout({
   return (
     <html lang="pl">
       <body className="antialiased">
+        <SetupWizard />
         <Sidebar />
         <Header />
         <main className="ml-60 pt-14 min-h-screen">
