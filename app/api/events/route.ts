@@ -1,8 +1,7 @@
-import { getDb } from '@/lib/db';
+import { dbAll, dbGet, dbRun } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 export async function GET(req: Request) {
-  const db = getDb();
   const { searchParams } = new URL(req.url);
   const limit = parseInt(searchParams.get('limit') ?? '50');
   const muxId = searchParams.get('mux_id');
@@ -22,18 +21,16 @@ export async function GET(req: Request) {
   sql += ' ORDER BY e.created_at DESC LIMIT ?';
   args.push(limit);
 
-  const rows = db.prepare(sql).all(...args);
+  const rows = await dbAll(sql, args);
   return NextResponse.json(rows);
 }
 
 export async function POST(req: Request) {
-  const db = getDb();
   const body = await req.json();
-  const stmt = db.prepare(`
+  const info = await dbRun(`
     INSERT INTO events (severity,source,mux_id,channel_id,sfn_node_id,message,details)
     VALUES (@severity,@source,@mux_id,@channel_id,@sfn_node_id,@message,@details)
-  `);
-  const info = stmt.run(body);
-  const row = db.prepare('SELECT * FROM events WHERE id = ?').get(info.lastInsertRowid);
+  `, body);
+  const row = await dbGet('SELECT * FROM events WHERE id = ?', [info.lastInsertRowid]);
   return NextResponse.json(row, { status: 201 });
 }

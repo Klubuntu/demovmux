@@ -1,20 +1,177 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { Pool } from 'pg';
 
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'vmux.db');
 
 let _db: Database.Database | null = null;
+let _pool: Pool | null = null;
+let _client: DbClient | null = null;
 
-export function getDb(): Database.Database {
+export type DbClient =
+  | { kind: 'sqlite'; db: Database.Database }
+  | { kind: 'postgres'; pool: Pool };
+
+type NamedParams = Record<string, unknown>;
+type QueryParams = NamedParams | Array<unknown> | string | number | boolean | null | undefined;
+
+function getDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL?.trim();
+  if (url) return url;
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Missing DATABASE_URL in production environment');
+  }
+
+  return `file:${DB_PATH}`;
+}
+
+function createSqliteDbFromUrl(url: string): Database.Database {
   if (_db) return _db;
-  if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
-  _db = new Database(DB_PATH);
+
+  const filePath = url.replace(/^file:/, '');
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  _db = new Database(filePath);
   _db.pragma('journal_mode = WAL');
   _db.pragma('foreign_keys = ON');
   initSchema(_db);
   return _db;
+}
+
+function createPgPool(url: string): Pool {
+  if (_pool) return _pool;
+  _pool = new Pool({
+    connectionString: url,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+  });
+  return _pool;
+}
+
+export function createDb(): DbClient {
+  if (_client) return _client;
+
+  const url = getDatabaseUrl();
+  if (url.startsWith('file:')) {
+    _client = { kind: 'sqlite', db: createSqliteDbFromUrl(url) };
+    return _client;
+  }
+
+  if (url.startsWith('postgres://') || url.startsWith('postgresql://')) {
+    _client = { kind: 'postgres', pool: createPgPool(url) };
+    return _client;
+  }
+
+  throw new Error(`Unsupported DATABASE_URL scheme: ${url}`);
+}
+
+function rewriteSqlForPostgres(sql: string): string {
+  return sql.replace(/datetime\('now'\)/g, 'CURRENT_TIMESTAMP');
+}
+
+function normalizePgQuery(sql: string, params?: QueryParams): { sql: string; values: unknown[] } {
+  let pgSql = rewriteSqlForPostgres(sql);
+
+  if (Array.isArray(params)) {
+    let i = 0;
+    pgSql = pgSql.replace(/\?/g, () => `$${++i}`);
+    return { sql: pgSql, values: params };
+  }
+
+  if (params && typeof params === 'object') {
+    const values: unknown[] = [];
+    const indexes = new Map<string, number>();
+    pgSql = pgSql.replace(/@([a-zA-Z_][a-zA-Z0-9_]*)/g, (_full, key: string) => {
+      if (!indexes.has(key)) {
+        values.push((params as NamedParams)[key] ?? null);
+        indexes.set(key, values.length);
+      }
+      return `$${indexes.get(key)}`;
+    });
+    return { sql: pgSql, values };
+  }
+
+  if (typeof params !== 'undefined') {
+    let replaced = false;
+    pgSql = pgSql.replace(/\?/g, () => {
+      replaced = true;
+      return '$1';
+    });
+    return { sql: pgSql, values: replaced ? [params] : [] };
+  }
+
+  return { sql: pgSql, values: [] };
+}
+
+function withReturningId(sql: string): string {
+  if (/\breturning\b/i.test(sql)) return sql;
+  return `${sql.replace(/;\s*$/, '')} RETURNING id`;
+}
+
+export async function dbAll<T = unknown>(sql: string, params?: QueryParams): Promise<T[]> {
+  const client = createDb();
+  if (client.kind === 'sqlite') {
+    const stmt = client.db.prepare(sql);
+    if (Array.isArray(params)) return stmt.all(...params) as T[];
+    if (params && typeof params === 'object') return stmt.all(params as NamedParams) as T[];
+    if (typeof params !== 'undefined') return stmt.all(params) as T[];
+    return stmt.all() as T[];
+  }
+
+  const normalized = normalizePgQuery(sql, params);
+  const result = await client.pool.query(normalized.sql, normalized.values);
+  return result.rows as T[];
+}
+
+export async function dbGet<T = unknown>(sql: string, params?: QueryParams): Promise<T | undefined> {
+  const rows = await dbAll<T>(sql, params);
+  return rows[0];
+}
+
+export async function dbRun(
+  sql: string,
+  params?: QueryParams,
+): Promise<{ changes: number; lastInsertRowid?: number | string }> {
+  const client = createDb();
+  if (client.kind === 'sqlite') {
+    const stmt = client.db.prepare(sql);
+    let info: Database.RunResult;
+    if (Array.isArray(params)) info = stmt.run(...params);
+    else if (params && typeof params === 'object') info = stmt.run(params as NamedParams);
+    else if (typeof params !== 'undefined') info = stmt.run(params);
+    else info = stmt.run();
+    return { changes: info.changes, lastInsertRowid: info.lastInsertRowid as number | string };
+  }
+
+  const normalized = normalizePgQuery(sql, params);
+  const isInsert = /^\s*insert\s+into\s+/i.test(normalized.sql);
+  const finalSql = isInsert ? withReturningId(normalized.sql) : normalized.sql;
+  const result = await client.pool.query(finalSql, normalized.values);
+  const insertedId = isInsert ? (result.rows[0]?.id as number | string | undefined) : undefined;
+  return { changes: result.rowCount ?? 0, lastInsertRowid: insertedId };
+}
+
+export async function healthcheck(): Promise<boolean> {
+  const client = createDb();
+
+  if (client.kind === 'sqlite') {
+    const row = client.db.prepare('SELECT 1 as ok').get() as { ok: number };
+    return row.ok === 1;
+  }
+
+  const res = await client.pool.query('SELECT 1 as ok');
+  return res.rows[0]?.ok === 1;
+}
+
+export function getDb(): Database.Database {
+  const client = createDb();
+  if (client.kind !== 'sqlite') {
+    throw new Error('getDb() supports only sqlite. Use dbGet/dbAll/dbRun for database-agnostic access.');
+  }
+  return client.db;
 }
 
 function initSchema(db: Database.Database) {

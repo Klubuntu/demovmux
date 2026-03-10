@@ -1,19 +1,17 @@
-import { getDb } from '@/lib/db';
+import { dbGet, dbRun } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const db = getDb();
-  const row = db.prepare('SELECT c.*, m.name as mux_name FROM channels c JOIN multiplexes m ON m.id=c.mux_id WHERE c.id=?').get(id);
+  const row = await dbGet('SELECT c.*, m.name as mux_name FROM channels c JOIN multiplexes m ON m.id=c.mux_id WHERE c.id=?', [id]);
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   return NextResponse.json(row);
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const db = getDb();
   const body = await req.json();
-  db.prepare(`
+  await dbRun(`
     UPDATE channels SET mux_id=@mux_id, name=@name, short_name=@short_name, lcn=@lcn,
     service_id=@service_id, pmt_pid=@pmt_pid, video_pid=@video_pid, audio_pid=@audio_pid,
     pcr_pid=@pcr_pid, video_format=@video_format, video_bitrate_mbps=@video_bitrate_mbps,
@@ -25,20 +23,19 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     epg_source_url=@epg_source_url, epg_channel_id=@epg_channel_id,
     channel_type=@channel_type, audio_codec=@audio_codec,
     sample_rate_hz=@sample_rate_hz, stereo_mode=@stereo_mode,
-    updated_at=datetime('now')
+    updated_at=CURRENT_TIMESTAMP
     WHERE id=@id
-  `).run({
+  `, {
     stream_url: null, stream_type: 'hls', epg_source_url: null, epg_channel_id: null,
     channel_type: 'tv', audio_codec: 'AAC', sample_rate_hz: 48000, stereo_mode: 'stereo',
     ...body, id,
   });
-  const row = db.prepare('SELECT * FROM channels WHERE id = ?').get(id);
+  const row = await dbGet('SELECT * FROM channels WHERE id = ?', [id]);
   return NextResponse.json(row);
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const db = getDb();
-  db.prepare('DELETE FROM channels WHERE id = ?').run(id);
+  await dbRun('DELETE FROM channels WHERE id = ?', [id]);
   return NextResponse.json({ ok: true });
 }
