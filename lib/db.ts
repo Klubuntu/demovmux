@@ -344,9 +344,9 @@ function seedIptvIfNeeded(db: Database.Database) {
 
   const muxResult = db.prepare(`
     INSERT INTO multiplexes (number, name, standard, mux_type, frequency_mhz, channel_number,
-      bandwidth_mhz, modulation, fft_size, code_rate, guard_interval, pilot_pattern, status, notes)
-    VALUES (10,'IPTV Stream','IPTV','iptv',0,0,0,'N/A','N/A','N/A','N/A','N/A','active',
-      'Wirtualny multipleks IPTV – odbiór strumieni HLS/RTMP/SRT/DASH')
+      bandwidth_mhz, modulation, fft_mode, fec, guard_interval, status, notes)
+    VALUES (10,'IPTV Stream','IPTV','iptv',0,0,0,'N/A','N/A','N/A','N/A','active',
+      'Wirtualny multipleks IPTV \u2013 odbiór strumieni HLS/RTMP/SRT/DASH')
   `).run();
   const muxId = muxResult.lastInsertRowid as number;
 
