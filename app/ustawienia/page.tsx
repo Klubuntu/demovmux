@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Database, Info, RefreshCw, CheckCircle2, AlertTriangle, WifiOff, HardDrive, Server } from 'lucide-react';
+import { Database, Info, RefreshCw, CheckCircle2, AlertTriangle, WifiOff, HardDrive, Server, RotateCcw } from 'lucide-react';
 
 interface SystemInfo {
   dbType: string;
@@ -29,6 +29,10 @@ export default function UstawieniaPage() {
   const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedMsg, setSeedMsg] = useState('');
+  const [resetStep, setResetStep] = useState<'idle' | 'confirm'>('idle');
+  const [resetPwd, setResetPwd] = useState('');
+  const [resetMsg, setResetMsg] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(setInfo);
@@ -59,6 +63,26 @@ export default function UstawieniaPage() {
     });
     setSvc(await res.json());
     setSaving(false);
+  };
+
+  const factoryReset = async () => {
+    setResetting(true);
+    setResetMsg('');
+    const res = await fetch('/api/factory-reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: resetPwd }),
+    });
+    const data = await res.json();
+    setResetting(false);
+    if (data.ok) {
+      setResetMsg('ok');
+      setResetStep('idle');
+      setResetPwd('');
+      fetch('/api/settings').then(r => r.json()).then(setInfo);
+    } else {
+      setResetMsg(data.error ?? 'Błąd resetu.');
+    }
   };
 
   const seedData = async () => {
@@ -201,6 +225,65 @@ export default function UstawieniaPage() {
             }`}>
               {seedMsg}
             </p>
+          )}
+        </div>
+
+        {/* Factory reset */}
+        <div className="px-5 py-4">
+          {resetMsg === 'ok' && (
+            <p className="mb-3 text-sm px-3 py-2 rounded-lg bg-green-50 text-green-700">
+              ✓ Przywrócono ustawienia fabryczne.
+            </p>
+          )}
+          {resetStep === 'idle' ? (
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-red-600">Przywróć do ustawień fabrycznych</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Usuwa wszystkie dane i przywraca dane demonstracyjne
+                </p>
+              </div>
+              <button
+                onClick={() => { setResetStep('confirm'); setResetMsg(''); }}
+                className="flex items-center gap-2 px-4 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 shrink-0"
+              >
+                <RotateCcw size={13} />
+                Przywróć
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-red-600">Potwierdź przywrócenie ustawień fabrycznych</p>
+              <label className="block text-xs font-medium text-gray-600">
+                Hasło administratora
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={resetPwd}
+                  onChange={e => setResetPwd(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && factoryReset()}
+                  autoFocus
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300"
+                />
+                <button
+                  onClick={factoryReset}
+                  disabled={resetting || !resetPwd}
+                  className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 shrink-0"
+                >
+                  {resetting ? '…' : 'Przywróć'}
+                </button>
+                <button
+                  onClick={() => { setResetStep('idle'); setResetPwd(''); setResetMsg(''); }}
+                  className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 shrink-0"
+                >
+                  Anuluj
+                </button>
+              </div>
+              {resetMsg && resetMsg !== 'ok' && (
+                <p className="text-sm px-3 py-2 rounded-lg bg-red-50 text-red-700">{resetMsg}</p>
+              )}
+            </div>
           )}
         </div>
       </div>

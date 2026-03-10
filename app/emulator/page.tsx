@@ -79,11 +79,13 @@ export default function EmulatorPage() {
   const [showSysInfo, setShowSysInfo] = useState(false);
   const [menuIdx, setMenuIdx]         = useState(0);
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
+  const [pendingMuxJump, setPendingMuxJump] = useState<number | null>(null);
 
   const [osd, setOsd]       = useState<{ msg: string; vol: boolean } | null>(null);
   const [numBuf, setNumBuf] = useState('');
-  const osdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const numTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const osdTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const numTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // boot
   useEffect(() => {
@@ -105,19 +107,26 @@ export default function EmulatorPage() {
   }, []);
 
   // filter channels when reception or allChannels changes, reset to first
+  // also handle pending mux jump (after reception switch)
   useEffect(() => {
     const muxType = REC_TO_MUX[reception];
-    setChannels(allChannels.filter(c => c.mux_type === muxType));
-    setChIdx(0);
-  }, [reception, allChannels]);
+    const filtered = allChannels.filter(c => c.mux_type === muxType);
+    setChannels(filtered);
+    if (pendingMuxJump !== null) {
+      const idx = filtered.findIndex(c => c.mux_id === pendingMuxJump);
+      if (idx >= 0) {
+        setSwitching(true);
+        setTimeout(() => { setChIdx(idx); setSwitching(false); }, 200);
+      } else {
+        setChIdx(0);
+      }
+      setPendingMuxJump(null);
+    } else {
+      setChIdx(0);
+    }
+  }, [reception, allChannels]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // close context menu on any outside pointer-down
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const close = () => setCtxMenu(null);
-    window.addEventListener('pointerdown', close, { once: true, capture: true });
-    return () => window.removeEventListener('pointerdown', close, { capture: true });
-  }, [ctxMenu]);
+  // close context menu on click outside – use backdrop approach (no capture listener bug)
 
   const flashOsd = useCallback((msg: string, vol = false) => {
     setOsd({ msg, vol });
@@ -170,19 +179,43 @@ export default function EmulatorPage() {
     }, 1500);
   }, [powered, numBuf, channels, flashOsd]);
 
-  const jumpToMux = useCallback((muxId: number) => {
-    const idx = channels.findIndex(c => c.mux_id === muxId);
+  const jumpToMux = useCallback((muxId: number, recType: ReceptionType) => {
     const mux = multiplexes.find(m => m.id === muxId);
     setCtxMenu(null);
     flashOsd(`MUX: ${mux?.name ?? '–'}`);
-    if (!powered || idx < 0) return;
-    setSwitching(true);
-    setTimeout(() => { setChIdx(idx); setSwitching(false); }, 200);
-  }, [channels, multiplexes, powered, flashOsd]);
+    if (!powered) return;
+    if (recType !== reception) {
+      // switch reception first; useEffect will handle the channel jump via pendingMuxJump
+      setReception(recType);
+      setPendingMuxJump(muxId);
+    } else {
+      const idx = channels.findIndex(c => c.mux_id === muxId);
+      if (idx >= 0) {
+        setSwitching(true);
+        setTimeout(() => { setChIdx(idx); setSwitching(false); }, 200);
+      }
+    }
+  }, [channels, multiplexes, powered, reception, flashOsd]);
+
+  // long-press / context-menu handlers for the top bar
+  const openCtxMenu = useCallback((x: number, y: number) => {
+    setCtxMenu({ x, y });
+  }, []);
 
   const handleTitleRightClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setCtxMenu({ x: e.clientX, y: e.clientY });
+    openCtxMenu(e.clientX, e.clientY);
+  }, [openCtxMenu]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    longPress.current = setTimeout(() => {
+      openCtxMenu(touch.clientX, touch.clientY);
+    }, 600);
+  }, [openCtxMenu]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (longPress.current) { clearTimeout(longPress.current); longPress.current = null; }
   }, []);
 
   const handleMenuSelect = useCallback((item: string, idx: number) => {
@@ -219,7 +252,6 @@ export default function EmulatorPage() {
   const ch  = channels[chIdx];
   const rec = RECEPTION[reception];
   const sig = 72 + ((chIdx * 7 + 13) % 22);
-  const muxesForReception = multiplexes.filter(m => m.mux_type === REC_TO_MUX[reception]);
 
   // ══ BOOT ══
   if (!booted) return (
@@ -254,19 +286,25 @@ export default function EmulatorPage() {
     <div className="bg-gray-950 rounded-2xl overflow-hidden border border-gray-800 shadow-2xl min-h-[calc(100vh-7rem)]">
 
       {/* top bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-900 border-b border-gray-800 gap-3">
+      <div
+        className="flex items-center justify-between px-4 py-2.5 bg-gray-900 border-b border-gray-800 gap-3"
+        onContextMenu={handleTitleRightClick}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchMove={handleTouchEnd}
+      >
         <div className="flex items-center gap-3 min-w-0">
           <span
-            className="text-white font-bold text-sm shrink-0 cursor-context-menu select-none"
-            onContextMenu={handleTitleRightClick}
-            title="PPM → lista multipleksów bieżącego trybu"
+            className="text-white font-bold text-sm shrink-0 select-none"
+            title="PPM / przytrzymaj → lista wszystkich multipleksów"
           >
             vMUX Emulator
           </span>
           <button
             onClick={cycleReception}
+            onContextMenu={e => { e.stopPropagation(); }}
             className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border border-current/30 transition-all hover:opacity-80 active:scale-95 shrink-0 ${rec.bg} ${rec.color}`}
-            title="LPM: zmień typ odbioru (T) · PPM na tytule: lista MUX"
+            title="LPM: zmień typ odbioru (T)"
           >
             <rec.Icon size={11}/>{rec.label}
           </button>
@@ -277,45 +315,70 @@ export default function EmulatorPage() {
           )}
         </div>
         <button onClick={() => setShowHelp(true)}
+          onContextMenu={e => e.stopPropagation()}
           className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors px-3 py-1.5 rounded-lg hover:bg-gray-800 shrink-0">
           <HelpCircle size={13}/>Pomoc
         </button>
       </div>
 
-      {/* context menu – MUX list */}
+      {/* context menu – ALL muxes grouped by type, with backdrop to close */}
       {ctxMenu && (
-        <div
-          className="fixed z-[200] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-2 min-w-56 overflow-hidden"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
-          onPointerDown={e => e.stopPropagation()}
-        >
-          <div className={`px-4 py-2 flex items-center gap-2 border-b border-gray-800 ${rec.bg}`}>
-            <rec.Icon size={11} className={rec.color}/>
-            <p className={`text-xs font-semibold ${rec.color}`}>{rec.label} · multipleksy</p>
+        <>
+          {/* backdrop – catches any click outside the menu */}
+          <div
+            className="fixed inset-0 z-[199]"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={e => { e.preventDefault(); setCtxMenu(null); }}
+          />
+          <div
+            className="fixed z-[200] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto min-w-60"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          >
+            <div className="px-4 py-2 border-b border-gray-800 bg-gray-950/80">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Wszystkie multipleksy</p>
+            </div>
+            {(Object.keys(RECEPTION) as ReceptionType[]).map(recType => {
+              const cfgR = RECEPTION[recType];
+              const muxList = multiplexes.filter(m => m.mux_type === REC_TO_MUX[recType]);
+              if (muxList.length === 0) return null;
+              return (
+                <div key={recType}>
+                  <div className={`px-4 py-1.5 flex items-center gap-2 border-b border-gray-800/60 ${cfgR.bg}`}>
+                    <cfgR.Icon size={10} className={cfgR.color}/>
+                    <p className={`text-[10px] font-bold uppercase tracking-wide ${cfgR.color}`}>{cfgR.label}</p>
+                    {recType === reception && (
+                      <span className="ml-auto text-[9px] text-gray-500">aktywny</span>
+                    )}
+                  </div>
+                  {muxList.map(mux => {
+                    const firstCh = allChannels.find(c => c.mux_id === mux.id);
+                    const chCount = allChannels.filter(c => c.mux_id === mux.id).length;
+                    return (
+                      <button
+                        key={mux.id}
+                        onClick={() => jumpToMux(mux.id, recType)}
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center justify-between gap-3 transition-colors border-b border-gray-800/30 last:border-0"
+                      >
+                        <span className="flex items-center gap-2.5 min-w-0">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                            mux.status === 'active' ? cfgR.color.replace('text-','bg-') : 'bg-gray-600'
+                          }`}/>
+                          <span className="truncate">{mux.name}</span>
+                        </span>
+                        <span className="text-xs text-gray-600 shrink-0 tabular-nums">
+                          {chCount > 0
+                            ? `→ ${String(firstCh!.lcn).padStart(3,'0')}`
+                            : <span className="text-gray-700">brak kan.</span>
+                          }
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
-          {muxesForReception.length === 0 ? (
-            <p className="px-4 py-4 text-sm text-gray-600 text-center">
-              Brak multipleksów<br/>
-              <span className="text-xs text-gray-700">dla trybu {rec.label}</span>
-            </p>
-          ) : muxesForReception.map(mux => {
-            const firstCh = channels.find(c => c.mux_id === mux.id);
-            return (
-              <button key={mux.id} onClick={() => jumpToMux(mux.id)}
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-800 hover:text-white flex items-center justify-between gap-3 transition-colors">
-                <span className="flex items-center gap-2.5 min-w-0">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    mux.status === 'active' ? rec.color.replace('text-','bg-') : 'bg-gray-600'
-                  }`}/>
-                  <span className="truncate">{mux.name}</span>
-                </span>
-                <span className="text-xs text-gray-600 shrink-0 tabular-nums">
-                  {firstCh ? `→ ${String(firstCh.lcn).padStart(3,'0')}` : `${mux.channel_count} kan.`}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        </>
       )}
 
       {/* body */}
@@ -506,7 +569,7 @@ export default function EmulatorPage() {
                                 ['Tryb odbioru',rec.label],
                                 ['Kanałów w trybie',String(channels.length)],
                                 ['Sygnał',`${sig}%`],
-                                ['Multipleksów',String(muxesForReception.length)],
+                                ['Multipleksów',String(multiplexes.filter(m => m.mux_type === REC_TO_MUX[reception]).length)],
                                 ['Aktualny kanał',ch?ch.name:'—'],
                               ] as [string,string][]).map(([l,v])=>(
                                 <div key={l} className="bg-gray-800/80 rounded-lg px-2.5 py-1.5">
@@ -661,7 +724,7 @@ export default function EmulatorPage() {
             </div>
             <div className="px-5 py-4 border-t border-gray-800 text-center">
               <p className="text-xs text-gray-600">
-                <strong className="text-gray-500">PPM</strong> na „vMUX Emulator&rdquo; → lista MUX bieżącego trybu ·{' '}
+                <strong className="text-gray-500">PPM / przytrzymaj</strong> na pasku tytułu → lista wszystkich multipleksów ·{' '}
                 <strong className="text-gray-500">niebieski ●</strong> → info o systemie
               </p>
             </div>
