@@ -1,12 +1,12 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Wand2, Trash2, AlertTriangle } from 'lucide-react';
 
 interface PSITable {
   id: number; mux_id: number; mux_name?: string; table_type: string; pid: number;
   version: number; cycle_ms: number; enabled: number; payload_json: string; updated_at: string;
 }
-interface Mux { id: number; name: string; }
+interface Mux { id: number; name: string; number: number; mux_type: string; }
 
 const tableDesc: Record<string, string> = {
   PAT: 'Program Association Table – mapuje PID → Program',
@@ -17,7 +17,7 @@ const tableDesc: Record<string, string> = {
   TDT: 'Time Date Table – aktualny czas UTC',
   TOT: 'Time Offset Table – czas z uwzględnieniem strefy',
   AIT: 'Application Information Table – HbbTV apps',
-  MIP: 'Mega-frame Initialization Packet – sync SFN/GPS',
+  MIP: 'Mega-frame Initialization Packet – sync SFN/GPS (tylko DVB-T2 SFN)',
   BAT: 'Bouquet Association Table – grupy serwisów',
 };
 
@@ -29,11 +29,18 @@ const tableColor: Record<string, string> = {
   MIP: 'bg-yellow-100 text-yellow-700', BAT: 'bg-teal-100 text-teal-700',
 };
 
+const muxTypeBadge: Record<string, string> = {
+  terrestrial: 'DVB-T2', satellite: 'DVB-S2', cable: 'DVB-C', iptv: 'IPTV',
+};
+
 export default function TablicePage() {
   const [tables, setTables] = useState<PSITable[]>([]);
   const [muxes, setMuxes] = useState<Mux[]>([]);
   const [filterMux, setFilterMux] = useState('');
   const [saving, setSaving] = useState<number | null>(null);
+  const [generating, setGenerating] = useState<number | null>(null);
+  const [confirmOverwrite, setConfirmOverwrite] = useState<Mux | null>(null);
+  const [genMsg, setGenMsg] = useState<{ muxId: number; text: string; ok: boolean } | null>(null);
 
   const load = useCallback(() => {
     const q = filterMux ? `?mux_id=${filterMux}` : '';
@@ -62,16 +69,50 @@ export default function TablicePage() {
     load();
   };
 
-  const groupedByMux = tables.reduce<Record<string, PSITable[]>>((acc, t) => {
+  const deleteMuxTables = async (muxId: number) => {
+    await fetch(`/api/psi-si?mux_id=${muxId}`, { method: 'DELETE' });
+    load();
+  };
+
+  const generate = async (mux: Mux, overwrite = false) => {
+    setGenerating(mux.id);
+    setGenMsg(null);
+    setConfirmOverwrite(null);
+    const res = await fetch('/api/psi-si', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mux_id: mux.id, overwrite }),
+    });
+    const data = await res.json();
+    setGenerating(null);
+    if (res.status === 409 && data.exists) {
+      setConfirmOverwrite(mux);
+      return;
+    }
+    setGenMsg({
+      muxId: mux.id,
+      ok: data.ok,
+      text: data.ok
+        ? `✓ Wygenerowano ${data.generated} tablic PSI/SI`
+        : (data.error ?? 'Błąd generowania'),
+    });
+    if (data.ok) load();
+  };
+
+  // Muxes that have no PSI-SI tables yet
+  const muxIdsWithTables = new Set(tables.map(t => t.mux_id));
+  const muxesWithout = muxes.filter(m => !muxIdsWithTables.has(m.id));
+
+  const groupedByMux = tables.reduce<Record<string, { mux: Mux | undefined; rows: PSITable[] }>>((acc, t) => {
     const key = t.mux_name ?? `MUX ${t.mux_id}`;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(t);
+    if (!acc[key]) acc[key] = { mux: muxes.find(m => m.id === t.mux_id), rows: [] };
+    acc[key].rows.push(t);
     return acc;
   }, {});
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Tablice PSI/SI</h2>
           <p className="text-sm text-gray-500">Program Specific Information / Service Information – konfiguracja strumienia TS</p>
@@ -88,11 +129,101 @@ export default function TablicePage() {
         </div>
       </div>
 
-      {Object.entries(groupedByMux).map(([muxName, rows]) => (
+      {/* MUXes without any PSI-SI tables */}
+      {muxesWithout.length > 0 && !filterMux && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2 text-amber-800">
+            <AlertTriangle size={16} />
+            <span className="text-sm font-semibold">Multipleksy bez tablic PSI/SI ({muxesWithout.length})</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {muxesWithout.map(m => (
+              <div key={m.id} className="flex items-center gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+                <span className="text-sm font-medium text-gray-800">{m.name}</span>
+                <span className="text-[10px] font-mono bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                  {muxTypeBadge[m.mux_type] ?? m.mux_type}
+                </span>
+                <button
+                  onClick={() => generate(m)}
+                  disabled={generating === m.id}
+                  className="flex items-center gap-1.5 text-xs bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  <Wand2 size={11} className={generating === m.id ? 'animate-pulse' : ''} />
+                  {generating === m.id ? 'Generuję…' : 'Generuj tablice'}
+                </button>
+                {genMsg?.muxId === m.id && (
+                  <span className={`text-xs ${genMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{genMsg.text}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Confirm overwrite dialog */}
+      {confirmOverwrite && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-2 text-orange-800">
+            <AlertTriangle size={16} />
+            <span className="text-sm">
+              <strong>{confirmOverwrite.name}</strong> ma już tablice PSI/SI. Czy chcesz je nadpisać nowymi?
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => generate(confirmOverwrite, true)}
+              className="text-sm bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700"
+            >
+              Nadpisz
+            </button>
+            <button
+              onClick={() => setConfirmOverwrite(null)}
+              className="text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+            >
+              Anuluj
+            </button>
+          </div>
+        </div>
+      )}
+
+      {Object.entries(groupedByMux).map(([muxName, { mux, rows }]) => (
         <div key={muxName} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-900">{muxName}</span>
-            <span className="text-xs text-gray-400">{rows.length} tablic</span>
+          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-900">{muxName}</span>
+              {mux && (
+                <span className="text-[10px] font-mono bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded">
+                  {muxTypeBadge[mux.mux_type] ?? mux.mux_type}
+                </span>
+              )}
+              <span className="text-xs text-gray-400">{rows.length} tablic</span>
+              {genMsg?.muxId === mux?.id && genMsg && (
+                <span className={`text-xs ${genMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{genMsg.text}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              {mux && (
+                <button
+                  onClick={() => generate(mux)}
+                  disabled={generating === mux.id}
+                  title="Regeneruj tablice"
+                  className="flex items-center gap-1.5 text-xs text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg hover:bg-blue-50 disabled:opacity-50"
+                >
+                  <Wand2 size={11} className={generating === mux.id ? 'animate-pulse' : ''} />
+                  {generating === mux.id ? 'Generuję…' : 'Regeneruj'}
+                </button>
+              )}
+              {mux && (
+                <button
+                  onClick={() => deleteMuxTables(mux.id)}
+                  title="Usuń wszystkie tablice tego MUX"
+                  className="flex items-center gap-1.5 text-xs text-red-500 border border-red-100 px-2.5 py-1 rounded-lg hover:bg-red-50"
+                >
+                  <Trash2 size={11} />
+                  Usuń
+                </button>
+              )}
+            </div>
           </div>
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -152,7 +283,9 @@ export default function TablicePage() {
           </div>
         </div>
       ))}
-      {tables.length === 0 && <div className="text-center py-16 text-gray-400">Brak danych PSI/SI</div>}
+      {tables.length === 0 && muxesWithout.length === 0 && (
+        <div className="text-center py-16 text-gray-400">Brak danych PSI/SI</div>
+      )}
     </div>
   );
 }
