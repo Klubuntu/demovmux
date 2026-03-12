@@ -8,7 +8,8 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
-    "iptv:demo-server": "pnpm --dir tools/demo-server start"
+    "iptv:demo-server": "pnpm --dir tools/demo-server start",
+    "inputs:emulators": "pnpm --dir tools/input-emulators start"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",

@@ -1,0 +1,785 @@
+{
+  "generatedAt": "2026-03-12T22:16:10.095Z",
+  "dashboardUrl": "http://127.0.0.1:8020",
+  "profiles": [
+    {
+      "id": "backhaul",
+      "label": "Backhaul · IP Multicast",
+      "type": "backhaul",
+      "protocol": "IP Multicast",
+      "targetHost": "239.10.10.10",
+      "targetPort": 5000,
+      "bitrateMbps": 6,
+      "jitterPct": 0.02,
+      "lossPct": 0.0005,
+      "deviceTemplates": [
+        {
+          "templateId": "hevc-encoder-node",
+          "name": "HEVC Encoder Node",
+          "vendor": "FFmpeg NVENC / Quick Sync / appliance",
+          "family": "Contribution Encoder",
+          "physicalPorts": [
+            "HDMI IN",
+            "SDI IN",
+            "1/10GbE OUT"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP publish",
+            "UDP MPTS toward multicast profile"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "W laboratorium reprezentuje sprzętowy lub software’owy enkoder H.265/H.264."
+        },
+        {
+          "templateId": "transport-mux",
+          "name": "Multiplexer / PSI-SI Inserter",
+          "vendor": "Sencore / Appear / Harmonic-class",
+          "family": "Mux",
+          "physicalPorts": [
+            "ASI IN",
+            "IP IN",
+            "ASI/IP OUT"
+          ],
+          "virtualPorts": [
+            "Multicast MPTS egress",
+            "TS over UDP / RTP ingress"
+          ],
+          "obsModes": [
+            "FFmpeg bridge from OBS"
+          ],
+          "note": "Łączy wiele usług w MPTS oraz wstawia tablice PSI/SI."
+        },
+        {
+          "templateId": "t2-gateway",
+          "name": "T2-Gateway",
+          "vendor": "Enensys / Rohde & Schwarz-class",
+          "family": "Gateway",
+          "physicalPorts": [
+            "IP IN",
+            "T2-MI / IP OUT"
+          ],
+          "virtualPorts": [
+            "UDP gateway egress",
+            "multicast ingest from mux"
+          ],
+          "obsModes": [
+            "nie dotyczy – element pośredni"
+          ],
+          "note": "Kluczowy element w łańcuchu DVB-T2 przed modulatorem RF."
+        },
+        {
+          "templateId": "igmp-switch",
+          "name": "IGMPv3 Multicast Switch",
+          "vendor": "Cisco / Juniper / Arista-class",
+          "family": "Switch",
+          "physicalPorts": [
+            "RJ45 / SFP / SFP+"
+          ],
+          "virtualPorts": [
+            "IGMP snooping domain",
+            "IP multicast distribution"
+          ],
+          "obsModes": [
+            "nie dotyczy – transport IP"
+          ],
+          "note": "Element infrastruktury wymagany dla poprawnej dystrybucji multicastu."
+        },
+        {
+          "templateId": "fec-gateway",
+          "name": "SMPTE ST 2022-1 FEC Gateway",
+          "vendor": "Evertz / Nevion-class",
+          "family": "FEC Gateway",
+          "physicalPorts": [
+            "IP IN",
+            "IP OUT"
+          ],
+          "virtualPorts": [
+            "Protected RTP/UDP flows",
+            "FEC parity streams"
+          ],
+          "obsModes": [
+            "FFmpeg bridge / contribution encoder"
+          ],
+          "note": "Dodaje korekcję błędów do dosyłu IP multicast/backhaul."
+        },
+        {
+          "templateId": "srt-gateway",
+          "name": "SRT Gateway",
+          "vendor": "Haivision / generic SRT gateway",
+          "family": "Gateway",
+          "physicalPorts": [
+            "IP WAN",
+            "LAN"
+          ],
+          "virtualPorts": [
+            "OBS native SRT",
+            "SRT -> multicast/UDP bridge"
+          ],
+          "obsModes": [
+            "OBS SRT"
+          ],
+          "note": "Most między światem contribution SRT a dystrybucją multicast."
+        }
+      ],
+      "statusPort": 8120,
+      "sourceAddress": "239.10.10.10",
+      "sourcePort": 5000,
+      "ingestAddress": null,
+      "ingestPort": null
+    },
+    {
+      "id": "ip_srt",
+      "label": "IP/SRT · SRT",
+      "type": "ip_srt",
+      "protocol": "SRT",
+      "targetHost": "127.0.0.1",
+      "targetPort": 4201,
+      "bitrateMbps": 5,
+      "jitterPct": 0.04,
+      "lossPct": 0.001,
+      "srtListenUrl": "srt://127.0.0.1:4201?mode=listener&latency=120",
+      "sourceHint": "SRT receiver (bridge: SRT -> UDP)",
+      "deviceTemplates": [
+        {
+          "templateId": "makito-x4",
+          "name": "Makito X4",
+          "vendor": "Haivision",
+          "family": "Video Encoder",
+          "physicalPorts": [
+            "3G-SDI IN / ST 2110",
+            "IP OUT"
+          ],
+          "virtualPorts": [
+            "OBS native SRT caller",
+            "AES-128/256 SRT listener"
+          ],
+          "obsModes": [
+            "OBS SRT"
+          ],
+          "note": "Makito X4 ma natywne SRT, HEVC/H.264 oraz wsparcie AES-128/256."
+        },
+        {
+          "templateId": "prism-flex",
+          "name": "Prism Flex",
+          "vendor": "Teradek",
+          "family": "Contribution Encoder",
+          "physicalPorts": [
+            "HDMI / SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "low-latency contribution stream"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Typowy kompaktowy enkoder contribution do transportu po IP."
+        },
+        {
+          "templateId": "pearl-nano",
+          "name": "Pearl Nano",
+          "vendor": "Epiphan",
+          "family": "Streamer / Recorder",
+          "physicalPorts": [
+            "HDMI IN",
+            "SDI IN",
+            "HDMI pass-through"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP / HLS",
+            "virtual confidence monitor"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Pearl Nano wspiera H.265/HEVC, HDMI/SDI oraz SRT/RTMP/HLS."
+        },
+        {
+          "templateId": "magewell-aio",
+          "name": "Ultra Encode AIO",
+          "vendor": "Magewell",
+          "family": "Streaming Encoder",
+          "physicalPorts": [
+            "HDMI IN",
+            "SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "HLS / RTP / UDP / NDI-compatible lab outputs"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Ultra Encode AIO ma HDMI+SDI, H.265 i wiele protokołów: RTMP, SRT, HLS, RTP, UDP."
+        },
+        {
+          "templateId": "kiloview-e2",
+          "name": "Kiloview E2",
+          "vendor": "Kiloview",
+          "family": "Encoder",
+          "physicalPorts": [
+            "HDMI / SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "IP contribution out"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Popularny enkoder contribution IP w workflowach event/broadcast."
+        },
+        {
+          "templateId": "aja-helo-plus",
+          "name": "HELO Plus",
+          "vendor": "AJA",
+          "family": "Streaming Appliance",
+          "physicalPorts": [
+            "HDMI IN/OUT",
+            "3G-SDI IN/OUT",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT/RTMP",
+            "HLS / RTP / UDP outputs"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Korekta: HELO Plus jest świetny do SRT/RTMP, ale to głównie H.264, nie HEVC/H.265."
+        },
+        {
+          "templateId": "uraycoder-h265",
+          "name": "UrayCoder H.265 Encoder",
+          "vendor": "URayCoder",
+          "family": "Encoder",
+          "physicalPorts": [
+            "HDMI / SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "HEVC contribution out"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Budżetowy odpowiednik sprzętowego enkodera H.265 w labie."
+        }
+      ],
+      "statusPort": 8121,
+      "sourceAddress": "127.0.0.1",
+      "sourcePort": 4201,
+      "ingestAddress": null,
+      "ingestPort": null
+    },
+    {
+      "id": "ip_srt_aes128",
+      "label": "IP/SRT · SRT (AES-128)",
+      "type": "ip_srt",
+      "protocol": "SRT",
+      "targetHost": "127.0.0.1",
+      "targetPort": 4202,
+      "bitrateMbps": 5,
+      "jitterPct": 0.045,
+      "lossPct": 0.0012,
+      "encryption": "AES-128",
+      "srtPassphrase": "vmux-demo-aes128",
+      "srtListenUrl": "srt://127.0.0.1:4202?mode=listener&latency=120&pbkeylen=16&passphrase=vmux-demo-aes128",
+      "sourceHint": "SRT receiver with AES-128 (bridge: SRT -> UDP)",
+      "deviceTemplates": [
+        {
+          "templateId": "makito-x4",
+          "name": "Makito X4",
+          "vendor": "Haivision",
+          "family": "Video Encoder",
+          "physicalPorts": [
+            "3G-SDI IN / ST 2110",
+            "IP OUT"
+          ],
+          "virtualPorts": [
+            "OBS native SRT caller",
+            "AES-128/256 SRT listener"
+          ],
+          "obsModes": [
+            "OBS SRT"
+          ],
+          "note": "Makito X4 ma natywne SRT, HEVC/H.264 oraz wsparcie AES-128/256."
+        },
+        {
+          "templateId": "prism-flex",
+          "name": "Prism Flex",
+          "vendor": "Teradek",
+          "family": "Contribution Encoder",
+          "physicalPorts": [
+            "HDMI / SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "low-latency contribution stream"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Typowy kompaktowy enkoder contribution do transportu po IP."
+        },
+        {
+          "templateId": "pearl-nano",
+          "name": "Pearl Nano",
+          "vendor": "Epiphan",
+          "family": "Streamer / Recorder",
+          "physicalPorts": [
+            "HDMI IN",
+            "SDI IN",
+            "HDMI pass-through"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP / HLS",
+            "virtual confidence monitor"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Pearl Nano wspiera H.265/HEVC, HDMI/SDI oraz SRT/RTMP/HLS."
+        },
+        {
+          "templateId": "magewell-aio",
+          "name": "Ultra Encode AIO",
+          "vendor": "Magewell",
+          "family": "Streaming Encoder",
+          "physicalPorts": [
+            "HDMI IN",
+            "SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "HLS / RTP / UDP / NDI-compatible lab outputs"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Ultra Encode AIO ma HDMI+SDI, H.265 i wiele protokołów: RTMP, SRT, HLS, RTP, UDP."
+        },
+        {
+          "templateId": "kiloview-e2",
+          "name": "Kiloview E2",
+          "vendor": "Kiloview",
+          "family": "Encoder",
+          "physicalPorts": [
+            "HDMI / SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "IP contribution out"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Popularny enkoder contribution IP w workflowach event/broadcast."
+        },
+        {
+          "templateId": "aja-helo-plus",
+          "name": "HELO Plus",
+          "vendor": "AJA",
+          "family": "Streaming Appliance",
+          "physicalPorts": [
+            "HDMI IN/OUT",
+            "3G-SDI IN/OUT",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT/RTMP",
+            "HLS / RTP / UDP outputs"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Korekta: HELO Plus jest świetny do SRT/RTMP, ale to głównie H.264, nie HEVC/H.265."
+        },
+        {
+          "templateId": "uraycoder-h265",
+          "name": "UrayCoder H.265 Encoder",
+          "vendor": "URayCoder",
+          "family": "Encoder",
+          "physicalPorts": [
+            "HDMI / SDI IN",
+            "Ethernet"
+          ],
+          "virtualPorts": [
+            "OBS native SRT / RTMP",
+            "HEVC contribution out"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Budżetowy odpowiednik sprzętowego enkodera H.265 w labie."
+        }
+      ],
+      "statusPort": 8122,
+      "sourceAddress": "127.0.0.1",
+      "sourcePort": 4202,
+      "ingestAddress": null,
+      "ingestPort": null
+    },
+    {
+      "id": "satellite",
+      "label": "Satelita · DVB-S2",
+      "type": "satellite",
+      "protocol": "DVB-S2",
+      "mode": "relay",
+      "ingestHost": "0.0.0.0",
+      "ingestPort": 15300,
+      "targetHost": "127.0.0.1",
+      "targetPort": 5300,
+      "bitrateMbps": 7,
+      "jitterPct": 0.015,
+      "lossPct": 0.0003,
+      "sourceHint": "Uplink emulation: encoder/modulator -> satellite relay",
+      "deviceTemplates": [
+        {
+          "templateId": "dvb-s2x-modulator",
+          "name": "DVB-S2X Modulator",
+          "vendor": "Work Microwave",
+          "family": "Satellite Modulator",
+          "physicalPorts": [
+            "ASI / IP IN",
+            "L-Band IF OUT"
+          ],
+          "virtualPorts": [
+            "UDP uplink ingest",
+            "DVB-S2 lab egress"
+          ],
+          "obsModes": [
+            "OBS native SRT/RTMP via FFmpeg bridge"
+          ],
+          "note": "W labie wejście uplink jest wirtualne, a IF/RF zastępowane przez relay MPEG-TS."
+        },
+        {
+          "templateId": "alitronika-modulator",
+          "name": "DVB-S2 Modulator",
+          "vendor": "Alitronika-class",
+          "family": "Satellite Modulator",
+          "physicalPorts": [
+            "ASI IN",
+            "IP IN",
+            "IF OUT"
+          ],
+          "virtualPorts": [
+            "udp://127.0.0.1:15300 ingest",
+            "emulated RF output"
+          ],
+          "obsModes": [
+            "OBS SRT / RTMP through bridge"
+          ],
+          "note": "Reprezentuje klasyczny profesjonalny modulator uplink."
+        },
+        {
+          "templateId": "upconverter",
+          "name": "Block Upconverter (BUC)",
+          "vendor": "Norsat / Advantech Wireless-class",
+          "family": "Upconverter",
+          "physicalPorts": [
+            "L-Band IN",
+            "RF OUT"
+          ],
+          "virtualPorts": [
+            "L-Band emulated by relay chain",
+            "RF represented by profile egress"
+          ],
+          "obsModes": [
+            "nie dotyczy – element RF"
+          ],
+          "note": "Element łańcucha sat uplink za modulatorem."
+        }
+      ],
+      "statusPort": 8123,
+      "sourceAddress": "127.0.0.1",
+      "sourcePort": 5300,
+      "ingestAddress": "0.0.0.0"
+    },
+    {
+      "id": "offair",
+      "label": "Off-Air · DVB-T2",
+      "type": "offair",
+      "protocol": "DVB-T2",
+      "targetHost": "127.0.0.1",
+      "targetPort": 5400,
+      "bitrateMbps": 4,
+      "jitterPct": 0.06,
+      "lossPct": 0.002,
+      "sourceHint": "DVB-T2 transmission lab profile for SDR or hardware modulators",
+      "deviceTemplates": [
+        {
+          "templateId": "hackrf-one",
+          "name": "HackRF One",
+          "vendor": "Great Scott Gadgets",
+          "family": "SDR",
+          "physicalPorts": [
+            "USB 2.0",
+            "SMA RF OUT"
+          ],
+          "virtualPorts": [
+            "OBS native -> SRT/RTMP -> FFmpeg bridge",
+            "MPEG-TS UDP -> DVB-T2 lab chain"
+          ],
+          "obsModes": [
+            "OBS Custom Output: SRT",
+            "OBS RTMP Custom Server"
+          ],
+          "note": "Popularny SDR do testów RF; w labie port RF jest zastępowany egress MPEG-TS."
+        },
+        {
+          "templateId": "limesdr-mini",
+          "name": "LimeSDR Mini",
+          "vendor": "Lime Microsystems",
+          "family": "SDR",
+          "physicalPorts": [
+            "USB 3.0",
+            "SMA RF OUT"
+          ],
+          "virtualPorts": [
+            "OBS native -> SRT caller",
+            "TS over UDP -> software modulator"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP + FFmpeg relay"
+          ],
+          "note": "SDR klasy laboratoryjnej; dobry odpowiednik software-defined nadajnika DVB-T2."
+        },
+        {
+          "templateId": "usrp-b200",
+          "name": "Ettus USRP B200/B210",
+          "vendor": "Ettus Research / NI",
+          "family": "SDR",
+          "physicalPorts": [
+            "USB 3.0",
+            "RF front-end 70 MHz – 6 GHz"
+          ],
+          "virtualPorts": [
+            "OBS -> SRT/RTMP bridge",
+            "IQ / baseband via host PC"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "USRP B200/B210 to SDR z UHD/GNU Radio; dobrze pasuje do bardziej zaawansowanego labu."
+        },
+        {
+          "templateId": "thor-hdmi-dvbt2",
+          "name": "Thor Broadcast HDMI → DVB-T/T2 Modulator",
+          "vendor": "Thor Broadcast",
+          "family": "HDMI Modulator",
+          "physicalPorts": [
+            "HDMI IN",
+            "RF OUT"
+          ],
+          "virtualPorts": [
+            "OBS native HDMI replacement -> SRT/RTMP ingest",
+            "RF OUT -> emulated DVB-T2 egress"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "W labie HDMI jest mapowane na natywny output OBS, a RF na wirtualny egress profilu."
+        },
+        {
+          "templateId": "standalone-dvbt2",
+          "name": "Standalone DVB-T2 Headend Modulator",
+          "vendor": "Johansson / Televes / Promax-class",
+          "family": "Standalone Modulator",
+          "physicalPorts": [
+            "HDMI / ASI IN",
+            "RF OUT"
+          ],
+          "virtualPorts": [
+            "OBS native -> SRT/RTMP",
+            "UDP MPEG-TS ingest"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "Promax częściej kojarzy się z test & measurement / headend; w katalogu traktowany jako klasa urządzeń standalone."
+        }
+      ],
+      "statusPort": 8124,
+      "sourceAddress": "127.0.0.1",
+      "sourcePort": 5400,
+      "ingestAddress": null,
+      "ingestPort": null
+    },
+    {
+      "id": "microwave",
+      "label": "Radiolinia · E1/IP",
+      "type": "microwave",
+      "protocol": "E1/IP",
+      "targetHost": "127.0.0.1",
+      "targetPort": 5500,
+      "bitrateMbps": 3,
+      "jitterPct": 0.09,
+      "lossPct": 0.004,
+      "sourceHint": "Packet microwave / E1-IP hop emulation",
+      "deviceTemplates": [
+        {
+          "templateId": "ceragon-ip20",
+          "name": "IP-20 / IP-50",
+          "vendor": "Ceragon",
+          "family": "Microwave Radio",
+          "physicalPorts": [
+            "E1/TDM",
+            "Gigabit Ethernet",
+            "RF ODU/IDU"
+          ],
+          "virtualPorts": [
+            "UDP/IP relay",
+            "E1 mapped to low-rate UDP service"
+          ],
+          "obsModes": [
+            "OBS SRT / RTMP through bridge"
+          ],
+          "note": "Przykładowa radiolinia packet microwave z obsługą TDM/IP."
+        },
+        {
+          "templateId": "ipasolink",
+          "name": "iPASOLINK",
+          "vendor": "NEC",
+          "family": "Microwave Radio",
+          "physicalPorts": [
+            "E1",
+            "FE/GE Ethernet"
+          ],
+          "virtualPorts": [
+            "UDP/IP lab path",
+            "E1 -> emulated narrowband service"
+          ],
+          "obsModes": [
+            "FFmpeg bridge"
+          ],
+          "note": "Często spotykana platforma radiolinii operatorowych."
+        },
+        {
+          "templateId": "alfoplus2",
+          "name": "ALFOplus2",
+          "vendor": "SIAE Microelettronica",
+          "family": "Microwave Radio",
+          "physicalPorts": [
+            "Ethernet",
+            "legacy E1"
+          ],
+          "virtualPorts": [
+            "IP relay to microwave profile",
+            "virtual protected hop"
+          ],
+          "obsModes": [
+            "FFmpeg / SRT bridge"
+          ],
+          "note": "Profesjonalna radiolinia packet microwave / split-mount."
+        }
+      ],
+      "statusPort": 8125,
+      "sourceAddress": "127.0.0.1",
+      "sourcePort": 5500,
+      "ingestAddress": null,
+      "ingestPort": null
+    },
+    {
+      "id": "fiber",
+      "label": "Światłowód · ASI/SDI",
+      "type": "fiber",
+      "protocol": "ASI/SDI",
+      "targetHost": "127.0.0.1",
+      "targetPort": 5600,
+      "bitrateMbps": 8,
+      "jitterPct": 0.005,
+      "lossPct": 0.0001,
+      "sourceHint": "ASI/SDI over fiber transport emulation",
+      "deviceTemplates": [
+        {
+          "templateId": "aja-fido",
+          "name": "FiDO",
+          "vendor": "AJA",
+          "family": "Fiber ↔ SDI Converter",
+          "physicalPorts": [
+            "3G-SDI IN/OUT",
+            "Fiber LC"
+          ],
+          "virtualPorts": [
+            "SDI mapped to OBS SRT/RTMP feed",
+            "fiber path emulated as ASI/SDI egress"
+          ],
+          "obsModes": [
+            "OBS SRT",
+            "OBS RTMP"
+          ],
+          "note": "W labie SDI/fiber jest abstrahowane do transportu IP."
+        },
+        {
+          "templateId": "yellobrik-fiber",
+          "name": "yellobrik Fiber Transport",
+          "vendor": "Lynx Technik",
+          "family": "Fiber Transport",
+          "physicalPorts": [
+            "SDI / ASI",
+            "SFP / Fiber"
+          ],
+          "virtualPorts": [
+            "UDP/TS lab transport",
+            "virtual fiber span"
+          ],
+          "obsModes": [
+            "OBS SRT / RTMP bridge"
+          ],
+          "note": "Dobry odpowiednik lekkiego transportu SDI/ASI po włóknie."
+        },
+        {
+          "templateId": "flashlink",
+          "name": "Flashlink / Ventura",
+          "vendor": "Nevion",
+          "family": "Managed Fiber / ASI Transport",
+          "physicalPorts": [
+            "ASI",
+            "SDI",
+            "Optical"
+          ],
+          "virtualPorts": [
+            "managed IP/fiber hop",
+            "ASI/SDI egress into vMUX"
+          ],
+          "obsModes": [
+            "FFmpeg bridge"
+          ],
+          "note": "Klasa urządzeń do profesjonalnego transportu sygnałów broadcast po włóknie."
+        }
+      ],
+      "statusPort": 8126,
+      "sourceAddress": "127.0.0.1",
+      "sourcePort": 5600,
+      "ingestAddress": null,
+      "ingestPort": null
+    }
+  ]
+}

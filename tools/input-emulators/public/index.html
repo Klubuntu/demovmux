@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>vMUX · Emulators UI</title>
+    <style>
+      :root {
+        --bg: #050b14;
+        --panel: #0a1320;
+        --panel-2: #0d1726;
+        --panel-3: #122036;
+        --line: rgba(148, 163, 184, 0.12);
+        --text: #dde7f5;
+        --muted: #7f94b1;
+        --accent: #375d9f;
+        --accent-2: #4f46a8;
+        --ok: #1ec98a;
+        --err: #ff6b81;
+        --shadow: 0 24px 60px rgba(0, 0, 0, 0.36);
+        color-scheme: dark;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(55, 93, 159, 0.12), transparent 28%),
+          radial-gradient(circle at top right, rgba(79, 70, 168, 0.08), transparent 26%),
+          linear-gradient(180deg, #050b14 0%, #07101a 100%);
+        color: var(--text);
+        min-height: 100vh;
+      }
+
+      .shell { max-width: 1380px; margin: 0 auto; padding: 28px; }
+      .header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:18px; }
+      .headline h1 { margin:0; font-size:30px; font-weight:800; letter-spacing:-0.03em; }
+      .headline p { margin:8px 0 0; color:var(--muted); max-width:780px; font-size:14px; }
+      .status-chip { border:1px solid var(--line); background:rgba(10,19,32,0.94); padding:12px 14px; border-radius:10px; box-shadow:var(--shadow); min-width:220px; }
+      .status-chip strong { display:block; font-size:13px; }
+      .status-chip span { display:block; margin-top:4px; font-size:12px; color:var(--muted); }
+      .toolbar,.source-strip { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+      .toolbar { margin-bottom:14px; }
+      .source-strip { margin-bottom:18px; }
+      .chip,.source-badge,.ghost-btn,.primary-btn { border-radius:12px; border:1px solid var(--line); padding:10px 14px; font-size:13px; font-weight:700; cursor:pointer; transition:160ms ease; }
+      .chip,.source-badge,.ghost-btn { background:rgba(13,23,40,0.82); color:var(--text); }
+      .chip:hover,.source-badge:hover,.ghost-btn:hover { transform:translateY(-1px); border-color:rgba(79,140,255,0.42); background:rgba(17,29,50,0.95); }
+      .chip.active,.source-badge.active { background:linear-gradient(135deg, rgba(55,93,159,0.92), rgba(79,70,168,0.82)); border-color:rgba(255,255,255,0.04); box-shadow:0 8px 18px rgba(20,27,45,0.32); }
+      .source-badge { display:flex; align-items:center; gap:10px; }
+      .badge-dot { width:8px; height:8px; border-radius:999px; background:var(--ok); box-shadow:0 0 0 4px rgba(30,201,138,0.10); }
+      .badge-dot.offline { background:#60738d; box-shadow:0 0 0 4px rgba(96,115,141,0.10); }
+      .primary-btn { background:linear-gradient(135deg, var(--accent), var(--accent-2)); color:white; border-color:rgba(255,255,255,0.04); box-shadow:0 8px 18px rgba(20,27,45,0.30); }
+      .primary-btn:hover { transform:translateY(-1px); filter:brightness(1.05); }
+      .workspace { border:1px solid var(--line); border-radius:14px; background:linear-gradient(180deg, rgba(10,19,32,0.96), rgba(7,16,26,0.98)); box-shadow:var(--shadow); min-height:calc(100vh - 220px); overflow:hidden; }
+      .workspace-top { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 20px; border-bottom:1px solid var(--line); background:rgba(10,18,30,0.72); }
+      .workspace-top h2 { margin:0; font-size:16px; }
+      .workspace-top p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+      .workspace-grid { display:grid; grid-template-columns:320px 1fr; min-height:calc(100vh - 308px); }
+      .sidebar { border-right:1px solid var(--line); background:rgba(9,16,29,0.68); padding:18px; }
+      .sidebar h3,.panel h4 { margin:0; font-size:13px; letter-spacing:0.04em; text-transform:uppercase; color:#a8bdd9; }
+      .device-list { margin-top:14px; display:flex; flex-direction:column; gap:12px; }
+      .device-card { border:1px solid var(--line); background:rgba(13,23,38,0.86); border-radius:10px; padding:14px; cursor:pointer; transition:160ms ease; }
+      .device-card:hover,.device-card.active { border-color:rgba(79,140,255,0.45); transform:translateY(-1px); background:rgba(20,35,61,0.94); }
+      .device-card.active { box-shadow:inset 0 0 0 1px rgba(79,140,255,0.25); }
+      .device-card strong { display:block; font-size:14px; }
+      .device-card p { margin:6px 0 0; font-size:12px; color:var(--muted); }
+      .device-actions { margin-top:12px; display:flex; gap:8px; }
+      .mini-btn { border:1px solid var(--line); background:rgba(7,12,20,0.88); color:var(--text); border-radius:8px; padding:7px 10px; font-size:11px; font-weight:700; cursor:pointer; }
+      .mini-btn:hover { border-color:rgba(79,140,255,0.38); }
+      .empty { margin-top:14px; border:1px dashed rgba(138,160,191,0.22); border-radius:10px; padding:22px 18px; color:var(--muted); font-size:13px; line-height:1.6; }
+      .content { padding:18px; display:grid; grid-template-rows:auto auto 1fr; gap:16px; }
+      .hero { border:1px solid var(--line); background:linear-gradient(135deg, rgba(55,93,159,0.10), rgba(79,70,168,0.06)); border-radius:12px; padding:22px; }
+      .hero h2 { margin:0; font-size:28px; letter-spacing:-0.03em; }
+      .hero p { margin:8px 0 0; color:#b5c5db; font-size:14px; max-width:760px; }
+      .meta-grid,.connector-grid,.stats-grid { display:grid; gap:12px; }
+      .meta-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+      .connector-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .stats-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .panel { border:1px solid var(--line); background:rgba(13,23,38,0.86); border-radius:12px; padding:16px; }
+      .metric { border:1px solid var(--line); background:rgba(7,14,24,0.74); border-radius:10px; padding:14px; }
+      .metric .label { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:0.08em; }
+      .metric .value { display:block; margin-top:8px; font-size:16px; font-weight:800; line-height:1.35; word-break:break-word; }
+      .metric .sub { display:block; margin-top:6px; font-size:12px; color:var(--muted); }
+      .inline-status { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:rgba(8,14,23,0.78); font-size:12px; font-weight:700; }
+      .inline-status.ok { color:#9ff1cf; }
+      .inline-status.off { color:#b1bdd0; }
+      .devices-table { margin-top:12px; display:flex; flex-direction:column; gap:10px; }
+      .device-row { display:flex; justify-content:space-between; gap:12px; border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:rgba(8,14,23,0.72); }
+      .device-row strong { display:block; font-size:13px; }
+      .device-row span,.device-row small { color:var(--muted); font-size:12px; }
+      .modal-backdrop { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(3,7,14,0.6); backdrop-filter:blur(8px); z-index:100; }
+      .modal-backdrop.open { display:flex; }
+      .modal { width:min(560px, calc(100vw - 32px)); border:1px solid var(--line); background:linear-gradient(180deg, #0f1828, #09111d); border-radius:14px; box-shadow:var(--shadow); padding:22px; }
+      .modal h3 { margin:0; font-size:28px; letter-spacing:-0.03em; text-transform:none; color:white; }
+      .modal p { margin:8px 0 0; color:var(--muted); font-size:13px; }
+      .modal-steps { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; }
+      .step-pill { border:1px solid var(--line); background:rgba(7,14,24,0.7); border-radius:999px; padding:6px 10px; font-size:11px; color:#b7c7de; }
+      .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:20px; }
+      .field label { display:block; margin-bottom:8px; font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:#9db1cd; }
+      select { width:100%; border:1px solid var(--line); background:rgba(7,14,24,0.88); color:var(--text); border-radius:8px; padding:12px 14px; font-size:14px; outline:none; }
+      select:focus { border-color:rgba(79,140,255,0.5); }
+      .modal-preview { margin-top:16px; border:1px solid var(--line); background:rgba(8,14,24,0.76); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+      .preview-title { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+      .preview-title strong { font-size:14px; }
+      .preview-title span { color:var(--muted); font-size:12px; }
+      .port-list { display:flex; flex-wrap:wrap; gap:8px; }
+      .port-pill { border:1px solid var(--line); background:rgba(13,23,38,0.9); border-radius:999px; padding:5px 9px; font-size:11px; color:#c0d0e6; }
+      .quick-action { border:1px solid var(--line); background:rgba(10,19,32,0.85); border-radius:10px; padding:12px; }
+      .quick-action h5 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:0.07em; color:#abc1df; }
+      .quick-action-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+      .snippet { margin-top:8px; border:1px solid var(--line); background:rgba(5,10,18,0.86); border-radius:8px; padding:10px; font-size:12px; line-height:1.45; color:#dbe7f7; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+      .quick-note { color:var(--muted); font-size:12px; margin:0; }
+      .modal-actions { margin-top:20px; display:flex; justify-content:flex-end; gap:10px; }
+      .kbd { display:inline-block; border:1px solid rgba(255,255,255,0.08); border-bottom-width:2px; border-radius:6px; padding:4px 8px; background:rgba(8,14,23,0.92); font-size:11px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#dbe6f5; }
+      @media (max-width: 1120px) {
+        .workspace-grid,.meta-grid,.connector-grid,.stats-grid,.field-grid { grid-template-columns:1fr; }
+        .sidebar { border-right:0; border-bottom:1px solid var(--line); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="header">
+        <div class="headline">
+          <h1>vMUX · Emulators UI</h1>
+          <p>Panel labowy do przełączania między wirtualnymi odpowiednikami fizycznych źródeł. Wybierasz badge źródła, podpinasz urządzenie i dostajesz gotowe złącza testowe do FFmpeg / SRT / OBS.</p>
+        </div>
+        <div class="status-chip">
+          <strong id="globalStatus">Ładowanie emulatorów…</strong>
+          <span id="globalStatusSub">Odczyt konfiguracji runtime</span>
+        </div>
+      </div>
+
+      <div class="toolbar" id="categoryTabs"></div>
+      <div class="source-strip" id="profileBadges"></div>
+
+      <div class="workspace">
+        <div class="workspace-top">
+          <div>
+            <h2>Laboratorium urządzeń wejściowych</h2>
+            <p>Kliknij inne badge na górze, aby przełączyć aktywne źródło, albo dodaj wirtualne urządzenie do listy po lewej.</p>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="ghost-btn" id="refreshBtn">Odśwież status</button>
+            <button class="primary-btn" id="openModalBtn">Dodaj urządzenie</button>
+          </div>
+        </div>
+
+        <div class="workspace-grid">
+          <aside class="sidebar">
+            <h3>Podpięte urządzenia</h3>
+            <div class="device-list" id="attachedDevices"></div>
+            <div class="empty" id="attachedEmpty">Nie masz jeszcze podpiętych urządzeń w labie. Kliknij <span class="kbd">Dodaj urządzenie</span>, wybierz kategorię i profil, a potem użyj gotowych złączy testowych po prawej stronie.</div>
+          </aside>
+
+          <main class="content">
+            <section class="hero">
+              <div style="display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap; align-items:flex-start;">
+                <div>
+                  <h2 id="heroTitle">Wybierz profil</h2>
+                  <p id="heroDesc">Źródła i złącza testowe pojawią się tutaj po wyborze urządzenia.</p>
+                </div>
+                <div id="heroStatus"></div>
+              </div>
+            </section>
+
+            <section class="meta-grid" id="metaGrid"></section>
+
+            <section class="connector-grid">
+              <div class="panel">
+                <h4>Złącza testowe</h4>
+                <div class="stats-grid" id="connectorGrid" style="margin-top:12px;"></div>
+              </div>
+
+              <div class="panel">
+                <h4>Urządzenia aktywne</h4>
+                <div class="devices-table" id="connectedDevices"></div>
+              </div>
+            </section>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="modalBackdrop">
+      <div class="modal">
+        <h3>Dodaj urządzenie</h3>
+        <p>Wybierz kategorię i model urządzenia. Pod spodem od razu zobaczysz czytelny podgląd portów i gotowe dane do podpięcia OBS/bridge.</p>
+        <div class="modal-steps">
+          <span class="step-pill">1. Kategoria</span>
+          <span class="step-pill">2. Urządzenie</span>
+          <span class="step-pill">3. Gotowy preset</span>
+        </div>
+        <div class="field-grid">
+          <div class="field">
+            <label for="categorySelect">Kategoria</label>
+            <select id="categorySelect"></select>
+          </div>
+          <div class="field">
+            <label for="deviceSelect">Urządzenie</label>
+            <select id="deviceSelect"></select>
+          </div>
+        </div>
+        <div class="modal-preview" id="modalPreview"></div>
+        <div class="modal-actions">
+          <button class="ghost-btn" id="cancelModalBtn">Anuluj</button>
+          <button class="primary-btn" id="addDeviceBtn">Dodaj do panelu</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const state = {
+        runtime: null,
+        selectedCategory: 'all',
+        selectedProfileId: '',
+        selectedAttachedId: '',
+        attachedDevices: JSON.parse(localStorage.getItem('vmux-attached-emulator-devices') || '[]'),
+      };
+
+      const CATEGORY_LABELS = {
+        all: 'Wszystkie',
+        backhaul: 'Backhaul',
+        ip_srt: 'IP/SRT',
+        satellite: 'Satelita',
+        offair: 'Off-Air',
+        microwave: 'Radiolinia',
+        fiber: 'Światłowód',
+      };
+
+      const el = {
+        globalStatus: document.getElementById('globalStatus'),
+        globalStatusSub: document.getElementById('globalStatusSub'),
+        categoryTabs: document.getElementById('categoryTabs'),
+        profileBadges: document.getElementById('profileBadges'),
+        attachedDevices: document.getElementById('attachedDevices'),
+        attachedEmpty: document.getElementById('attachedEmpty'),
+        heroTitle: document.getElementById('heroTitle'),
+        heroDesc: document.getElementById('heroDesc'),
+        heroStatus: document.getElementById('heroStatus'),
+        metaGrid: document.getElementById('metaGrid'),
+        connectorGrid: document.getElementById('connectorGrid'),
+        connectedDevices: document.getElementById('connectedDevices'),
+        modalBackdrop: document.getElementById('modalBackdrop'),
+        categorySelect: document.getElementById('categorySelect'),
+        deviceSelect: document.getElementById('deviceSelect'),
+        modalPreview: document.getElementById('modalPreview'),
+        refreshBtn: document.getElementById('refreshBtn'),
+        openModalBtn: document.getElementById('openModalBtn'),
+        cancelModalBtn: document.getElementById('cancelModalBtn'),
+        addDeviceBtn: document.getElementById('addDeviceBtn'),
+      };
+
+      function formatNumber(value) { return Number(value || 0).toLocaleString('pl-PL'); }
+      function profiles() { return state.runtime?.profiles || []; }
+      function visibleProfiles() { return profiles().filter((profile) => state.selectedCategory === 'all' || profile.type === state.selectedCategory); }
+      function findProfile(id) { return profiles().find((profile) => profile.id === id) || null; }
+      function flattenTemplates() {
+        return profiles().flatMap((profile) => (profile.deviceTemplates || []).map((template) => ({ ...template, profileId: profile.id, profileLabel: profile.label, profileType: profile.type })));
+      }
+      function templatesByCategory(type) {
+        return flattenTemplates().filter((template) => type === 'all' || template.profileType === type);
+      }
+      function findAttached(id) { return state.attachedDevices.find((entry) => entry.id === id) || null; }
+      function findTemplate(profileId, templateId) {
+        const profile = findProfile(profileId);
+        return profile?.deviceTemplates?.find((template) => template.templateId === templateId) || null;
+      }
+      function connectedDevices(profile) { return (profile?.status?.connectedDevices || []).filter((device) => device.alive); }
+      function persistAttached() { localStorage.setItem('vmux-attached-emulator-devices', JSON.stringify(state.attachedDevices)); }
+      function metric(label, value, sub = '') { return `<div class="metric"><span class="label">${label}</span><span class="value">${value}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</div>`; }
+      function escapeHtml(value) {
+        return String(value || '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+      function buildObsSrtCallerPreset(profile) {
+        const localHost = location.hostname || '127.0.0.1';
+        const outputHost = profile.sourceAddress || profile.targetHost || '127.0.0.1';
+        const outputPort = profile.sourcePort || profile.targetPort;
+
+        if (profile.srtListenUrl) {
+          try {
+            const listen = new URL(profile.srtListenUrl);
+            const callerParams = new URLSearchParams(listen.search);
+            callerParams.set('mode', 'caller');
+            if (profile.srtPassphrase && !callerParams.has('passphrase')) callerParams.set('passphrase', profile.srtPassphrase);
+            if (profile.encryption === 'AES-128' && !callerParams.has('pbkeylen')) callerParams.set('pbkeylen', '16');
+            const callerHost = (listen.hostname === '127.0.0.1' || listen.hostname === '0.0.0.0') ? localHost : listen.hostname;
+            const obsUrl = `srt://${callerHost}:${listen.port}?${callerParams.toString()}`;
+
+            const bridgeParams = new URLSearchParams(listen.search);
+            bridgeParams.set('mode', 'listener');
+            if (profile.srtPassphrase && !bridgeParams.has('passphrase')) bridgeParams.set('passphrase', profile.srtPassphrase);
+            if (profile.encryption === 'AES-128' && !bridgeParams.has('pbkeylen')) bridgeParams.set('pbkeylen', '16');
+            const bridgeInput = `srt://0.0.0.0:${listen.port}?${bridgeParams.toString()}`;
+            const bridgeCommand = `ffmpeg -fflags nobuffer -i "${bridgeInput}" -c copy -f mpegts "udp://${outputHost}:${outputPort}?pkt_size=1316"`;
+            return { obsUrl, bridgeCommand, available: true };
+          } catch {
+            return { available: false };
+          }
+        }
+
+        if (profile.protocol === 'SRT' && profile.targetPort) {
+          const params = new URLSearchParams({ mode: 'caller', latency: '120' });
+          if (profile.srtPassphrase) params.set('passphrase', profile.srtPassphrase);
+          if (profile.encryption === 'AES-128') params.set('pbkeylen', '16');
+          const obsUrl = `srt://${localHost}:${profile.targetPort}?${params.toString()}`;
+          const listenerUrl = `srt://0.0.0.0:${profile.targetPort}?mode=listener&latency=120`;
+          const bridgeCommand = `ffmpeg -fflags nobuffer -i "${listenerUrl}" -c copy -f mpegts "udp://${outputHost}:${outputPort}?pkt_size=1316"`;
+          return { obsUrl, bridgeCommand, available: true };
+        }
+
+        return { available: false };
+      }
+
+      function renderCategoryTabs() {
+        const types = ['all', ...new Set(profiles().map((profile) => profile.type))];
+        el.categoryTabs.innerHTML = types.map((type) => `<button class="chip ${state.selectedCategory === type ? 'active' : ''}" data-category="${type}">${CATEGORY_LABELS[type] || type}</button>`).join('');
+        el.categoryTabs.querySelectorAll('[data-category]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.selectedCategory = button.dataset.category;
+            const visible = visibleProfiles();
+            if (!visible.some((profile) => profile.id === state.selectedProfileId)) state.selectedProfileId = visible[0]?.id || '';
+            renderAll();
+          });
+        });
+      }
+
+      function renderProfileBadges() {
+        const list = visibleProfiles();
+        el.profileBadges.innerHTML = list.map((profile) => `<button class="source-badge ${state.selectedProfileId === profile.id ? 'active' : ''}" data-profile="${profile.id}"><span class="badge-dot ${profile.online ? '' : 'offline'}"></span><span>${profile.label}</span></button>`).join('');
+        el.profileBadges.querySelectorAll('[data-profile]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.selectedProfileId = button.dataset.profile;
+            renderAll();
+          });
+        });
+      }
+
+      function renderAttachedDevices() {
+        const attached = state.attachedDevices.map((entry) => {
+          const profile = findProfile(entry.profileId);
+          const template = findTemplate(entry.profileId, entry.templateId);
+          return profile && template ? { entry, profile, template } : null;
+        }).filter(Boolean);
+        el.attachedEmpty.style.display = attached.length ? 'none' : 'block';
+        el.attachedDevices.innerHTML = attached.map(({ entry, profile, template }) => `<div class="device-card ${state.selectedAttachedId === entry.id ? 'active' : ''}" data-attached="${entry.id}"><strong>${template.name}</strong><p>${template.vendor} · ${profile.label}</p><p>${profile.online ? 'Online' : 'Offline'} · ${connectedDevices(profile).length} aktywnych urządzeń</p><div class="device-actions"><button class="mini-btn" data-activate="${entry.id}">Aktywuj</button><button class="mini-btn" data-remove="${entry.id}">Usuń</button></div></div>`).join('');
+        el.attachedDevices.querySelectorAll('[data-activate]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); const item = findAttached(button.dataset.activate); state.selectedAttachedId = button.dataset.activate; state.selectedProfileId = item?.profileId || state.selectedProfileId; renderAll(); }));
+        el.attachedDevices.querySelectorAll('[data-remove]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); state.attachedDevices = state.attachedDevices.filter((item) => item.id !== button.dataset.remove); if (state.selectedAttachedId === button.dataset.remove) state.selectedAttachedId = state.attachedDevices[0]?.id || ''; persistAttached(); renderAll(); }));
+        el.attachedDevices.querySelectorAll('[data-attached]').forEach((card) => card.addEventListener('click', () => { const item = findAttached(card.dataset.attached); state.selectedAttachedId = card.dataset.attached; state.selectedProfileId = item?.profileId || state.selectedProfileId; renderAll(); }));
+      }
+
+      function renderActiveProfile() {
+        const attached = findAttached(state.selectedAttachedId);
+        const profile = (attached ? findProfile(attached.profileId) : null) || findProfile(state.selectedProfileId) || visibleProfiles()[0] || null;
+        const template = attached ? findTemplate(attached.profileId, attached.templateId) : null;
+        if (!profile) {
+          el.heroTitle.textContent = 'Brak profili emulatora';
+          el.heroDesc.textContent = 'Uruchom narzędzie lub sprawdź runtime-config.';
+          el.heroStatus.innerHTML = '<span class="inline-status off">Brak danych</span>';
+          el.metaGrid.innerHTML = '';
+          el.connectorGrid.innerHTML = '';
+          el.connectedDevices.innerHTML = '<div class="empty" style="margin-top:0;">Brak aktywnych urządzeń.</div>';
+          return;
+        }
+
+        state.selectedProfileId = profile.id;
+        const devices = connectedDevices(profile);
+        const stats = profile.status || {};
+        el.heroTitle.textContent = template ? template.name : profile.label;
+        el.heroDesc.textContent = template
+          ? `${template.vendor} · ${template.family}. ${template.note || ''}`
+          : (profile.sourceHint || 'Wirtualny odpowiednik źródła fizycznego gotowy do testów laboratoryjnych.');
+        el.heroStatus.innerHTML = `<span class="inline-status ${profile.online ? 'ok' : 'off'}"><span class="badge-dot ${profile.online ? '' : 'offline'}"></span>${profile.online ? 'Online' : 'Offline'}</span>`;
+        el.metaGrid.innerHTML = [
+          metric('Kategoria', CATEGORY_LABELS[profile.type] || profile.type, profile.protocol),
+          metric('Urządzenie', template ? `${template.vendor}` : profile.label, template ? (template.family || 'device template') : 'profil emulatora'),
+          metric('Tryb pracy', profile.mode || 'synthetic', profile.encryption ? `szyfrowanie: ${profile.encryption}` : 'bez dodatkowego szyfrowania'),
+          metric('Pakiety TX/RX', `${formatNumber(stats.sentPackets)} / ${formatNumber(stats.receivedPackets)}`, profile.online ? 'na żywo z adaptera' : 'brak statusu runtime'),
+        ].join('');
+
+        const commands = [];
+        if (template) {
+          commands.push(metric('Fizyczne złącza', (template.physicalPorts || []).join(' · ') || '—', 'porty urządzenia w realnym świecie'));
+          commands.push(metric('Wirtualne złącza lab', (template.virtualPorts || []).join(' · ') || '—', 'zamienniki portów fizycznych do testów'));
+          commands.push(metric('OBS / ingest', (template.obsModes || []).join(' · ') || 'FFmpeg bridge', 'natywne lub półnatywne źródła dla OBS Studio'));
+        }
+        if (profile.ingestPort) commands.push(metric('Ingress emulatora', `udp://${profile.ingestAddress || '0.0.0.0'}:${profile.ingestPort}`, 'tu wpinasz bridge lub nadajnik testowy'));
+        else if (profile.srtListenUrl) commands.push(metric('SRT Listener', profile.srtListenUrl, 'możesz podać do OBS / FFmpeg jako caller'));
+        else commands.push(metric('Generator', 'Wbudowany', 'adapter syntetyczny emituje ruch samodzielnie'));
+        commands.push(metric('Egress do vMUX', `${profile.sourceAddress}:${profile.sourcePort}`, 'to jest wirtualny odpowiednik wyjścia sprzętowego'));
+        if (profile.srtPassphrase) commands.push(metric('Hasło SRT', profile.srtPassphrase, 'dla profilu szyfrowanego AES-128'));
+        else commands.push(metric('Szyfrowanie', profile.encryption || 'none', profile.encryption ? 'ustaw tak samo w panelu' : 'profil nieszyfrowany'));
+        el.connectorGrid.innerHTML = commands.join('');
+
+        el.connectedDevices.innerHTML = devices.length
+          ? devices.map((device) => `<div class="device-row"><div><strong>${device.address}:${device.port}</strong><span>aktywny nadajnik w labie</span></div><div style="text-align:right;"><strong>${formatNumber(device.packets)} pkt</strong><small>stan: online</small></div></div>`).join('')
+          : '<div class="empty" style="margin-top:0;">Brak podłączonych urządzeń. Podepnij FFmpeg / OBS / bridge SRT do pokazanego ingressu.</div>';
+      }
+
+      function renderModalOptions() {
+        const categories = [...new Set(profiles().map((profile) => profile.type))];
+        const safeSelected = categories.includes(state.selectedCategory) ? state.selectedCategory : categories[0];
+        el.categorySelect.innerHTML = categories.map((type) => `<option value="${type}" ${type === safeSelected ? 'selected' : ''}>${CATEGORY_LABELS[type] || type}</option>`).join('');
+        const selectedType = el.categorySelect.value || categories[0] || '';
+        const items = templatesByCategory(selectedType);
+        el.deviceSelect.innerHTML = items.map((template) => `<option value="${template.profileId}::${template.templateId}">${template.name} · ${template.vendor}</option>`).join('');
+        renderModalPreview();
+      }
+
+      function renderModalPreview() {
+        const raw = el.deviceSelect.value;
+        if (!raw) {
+          el.modalPreview.innerHTML = '<p class="quick-note">Brak dostępnych urządzeń w tej kategorii.</p>';
+          return;
+        }
+
+        const [profileId, templateId] = raw.split('::');
+        const profile = findProfile(profileId);
+        const template = findTemplate(profileId, templateId);
+        if (!profile || !template) {
+          el.modalPreview.innerHTML = '<p class="quick-note">Nie udało się odczytać szablonu urządzenia.</p>';
+          return;
+        }
+
+        const preset = buildObsSrtCallerPreset(profile);
+        el.modalPreview.innerHTML = `
+          <div class="preview-title">
+            <strong>${escapeHtml(template.name)}</strong>
+            <span>${escapeHtml(template.vendor)} · ${escapeHtml(profile.label)}</span>
+          </div>
+          <p class="quick-note">${escapeHtml(template.note || 'Szablon urządzenia gotowy do testów laboratoryjnych.')}</p>
+          <div>
+            <h5 style="margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:0.07em; color:#abc1df;">Fizyczne → wirtualne</h5>
+            <div class="port-list">${(template.physicalPorts || []).map((port) => `<span class="port-pill">${escapeHtml(port)}</span>`).join('')}</div>
+            <div class="port-list" style="margin-top:8px;">${(template.virtualPorts || []).map((port) => `<span class="port-pill">${escapeHtml(port)}</span>`).join('')}</div>
+          </div>
+          <div class="quick-action">
+            <h5>Szybki preset</h5>
+            ${preset.available
+              ? `
+                <div class="quick-action-row">
+                  <button class="primary-btn" type="button" style="padding:8px 12px; border-radius:10px;" data-copy-value="${encodeURIComponent(preset.obsUrl)}">OBS SRT caller</button>
+                  <button class="mini-btn" type="button" data-copy-value="${encodeURIComponent(preset.bridgeCommand)}">Kopiuj bridge FFmpeg</button>
+                </div>
+                <div class="snippet">${escapeHtml(preset.obsUrl)}</div>
+                <div class="snippet">${escapeHtml(preset.bridgeCommand)}</div>
+              `
+              : '<p class="quick-note">Dla tego profilu brak bezpośredniego presetu OBS SRT caller. Użyj trybu OBS RTMP/SRT zgodnie z profilem.</p>'}
+          </div>
+        `;
+
+        el.modalPreview.querySelectorAll('[data-copy-value]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const rawValue = button.getAttribute('data-copy-value') || '';
+            const value = decodeURIComponent(rawValue);
+            try {
+              await navigator.clipboard.writeText(value);
+              const previous = button.textContent;
+              button.textContent = 'Skopiowano';
+              setTimeout(() => { button.textContent = previous; }, 1000);
+            } catch {
+              // no-op
+            }
+          });
+        });
+      }
+
+      function openModal() { renderModalOptions(); el.modalBackdrop.classList.add('open'); }
+      function closeModal() { el.modalBackdrop.classList.remove('open'); }
+      function attachSelectedDevice() {
+        const raw = el.deviceSelect.value;
+        if (!raw) return;
+        const [profileId, templateId] = raw.split('::');
+        const template = findTemplate(profileId, templateId);
+        if (!template) return;
+        const instance = {
+          id: `${profileId}:${templateId}:${Date.now()}`,
+          profileId,
+          templateId,
+        };
+        state.attachedDevices.push(instance);
+        state.selectedAttachedId = instance.id;
+        state.selectedProfileId = profileId;
+        persistAttached();
+        closeModal();
+        renderAll();
+      }
+
+      function renderAll() { renderCategoryTabs(); renderProfileBadges(); renderAttachedDevices(); renderActiveProfile(); }
+
+      async function load() {
+        try {
+          const runtime = await fetch('/runtime-config.json', { cache: 'no-store' }).then((res) => res.json());
+          const profilesWithStatus = await Promise.all((runtime.profiles || []).map(async (profile) => {
+            try {
+              const status = await fetch(`http://${location.hostname}:${profile.statusPort}/status`, { cache: 'no-store' }).then((res) => res.json());
+              return { ...profile, status, online: true };
+            } catch {
+              return { ...profile, online: false, status: null };
+            }
+          }));
+
+          state.runtime = { ...runtime, profiles: profilesWithStatus };
+          if (!state.selectedProfileId) state.selectedProfileId = profilesWithStatus[0]?.id || '';
+          const knownIds = new Set(profilesWithStatus.map((profile) => profile.id));
+          state.attachedDevices = state.attachedDevices.filter((item) => knownIds.has(item.profileId) && Boolean(findTemplate(item.profileId, item.templateId)));
+          persistAttached();
+          const onlineCount = profilesWithStatus.filter((profile) => profile.online).length;
+          el.globalStatus.textContent = onlineCount > 0 ? `Online ${onlineCount}/${profilesWithStatus.length} emulatorów` : 'Brak aktywnych emulatorów';
+          el.globalStatusSub.textContent = runtime.generatedAt ? `runtime ${new Date(runtime.generatedAt).toLocaleTimeString('pl-PL')}` : 'brak znacznika czasu';
+        } catch {
+          state.runtime = { profiles: [] };
+          el.globalStatus.textContent = 'Nie udało się załadować emulatorów';
+          el.globalStatusSub.textContent = 'Uruchom: pnpm inputs:emulators';
+        }
+        renderAll();
+      }
+
+      el.refreshBtn.addEventListener('click', load);
+      el.openModalBtn.addEventListener('click', openModal);
+      el.cancelModalBtn.addEventListener('click', closeModal);
+      el.addDeviceBtn.addEventListener('click', attachSelectedDevice);
+      el.modalBackdrop.addEventListener('click', (event) => { if (event.target === el.modalBackdrop) closeModal(); });
+      el.categorySelect.addEventListener('change', renderModalOptions);
+      el.deviceSelect.addEventListener('change', renderModalPreview);
+
+      load();
+      setInterval(load, 2500);
+    </script>
+  </body>
+</html>

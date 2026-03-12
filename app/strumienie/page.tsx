@@ -11,6 +11,36 @@ interface Stream {
   redundancy_mode: string; encryption: string; status: string; last_seen_at: string;
 }
 
+interface EmulatorDevice {
+  id: string;
+  address: string;
+  port: number;
+  packets: number;
+  alive: boolean;
+}
+
+interface EmulatorProfile {
+  id: string;
+  label: string;
+  type: string;
+  protocol: string;
+  mode?: string;
+  sourceAddress: string;
+  sourcePort: number;
+  ingestAddress?: string | null;
+  ingestPort?: number | null;
+  encryption?: string;
+  srtPassphrase?: string;
+  srtListenUrl?: string;
+  sourceHint?: string;
+  online?: boolean;
+  status?: {
+    connectedDevices?: EmulatorDevice[];
+    sentPackets?: number;
+    receivedPackets?: number;
+  };
+}
+
 const typeIcons: Record<string, React.ElementType> = {
   fiber: Waves, satellite: Satellite, microwave: Radio, ip_srt: Globe,
   ip_rist: Globe, backhaul: Wifi, offair: Wifi,
@@ -35,12 +65,41 @@ const defaultStream: Partial<Stream> = {
 
 export default function StrumieniaPage() {
   const [streams, setStreams] = useState<Stream[]>([]);
+  const [labProfiles, setLabProfiles] = useState<EmulatorProfile[]>([]);
+  const [labRunning, setLabRunning] = useState(false);
+  const [selectedLabId, setSelectedLabId] = useState<string>('');
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<Partial<Stream>>(defaultStream);
   const [isEdit, setIsEdit] = useState(false);
 
   const load = () => fetch('/api/streams').then(r => r.json()).then(setStreams);
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadLab = () => {
+      fetch('/api/input-emulators', { cache: 'no-store' })
+        .then(r => r.json())
+        .then((d) => {
+          if (!mounted) return;
+          const profiles = (d?.profiles ?? []) as EmulatorProfile[];
+          setLabProfiles(profiles);
+          setLabRunning(Boolean(d?.running));
+          if (profiles.length > 0) {
+            setSelectedLabId(prev => prev || profiles[0].id);
+          }
+        })
+        .catch(() => {
+          if (!mounted) return;
+          setLabProfiles([]);
+          setLabRunning(false);
+        });
+    };
+
+    loadLab();
+    const t = setInterval(loadLab, 2500);
+    return () => { mounted = false; clearInterval(t); };
+  }, []);
 
   const openCreate = () => { setEditing(defaultStream); setIsEdit(false); setModal(true); };
   const openEdit = (s: Stream) => { setEditing(s); setIsEdit(true); setModal(true); };
@@ -57,6 +116,23 @@ export default function StrumieniaPage() {
     setModal(false); load();
   };
   const f = (k: keyof Stream, v: string | number) => setEditing(p => ({ ...p, [k]: v }));
+  const selectedLab = labProfiles.find(p => p.id === selectedLabId) ?? null;
+
+  const applyLabProfile = () => {
+    if (!selectedLab) return;
+    setEditing(p => ({
+      ...p,
+      name: p.name || `LAB ${selectedLab.label}`,
+      broadcaster: p.broadcaster || 'LAB Emulator',
+      type: selectedLab.type,
+      protocol: selectedLab.protocol,
+      source_address: selectedLab.sourceAddress,
+      source_port: selectedLab.sourcePort,
+      bitrate_mbps: Number(selectedLab.status?.receivedPackets ? Math.max(3, Math.round((selectedLab.status.receivedPackets / 5000))) : p.bitrate_mbps ?? 50),
+      encryption: selectedLab.encryption ?? 'none',
+      status: 'active',
+    }));
+  };
 
   const statusIcon = (s: string) => {
     if (s === 'active') return <Wifi size={14} className="text-green-500" />;
@@ -131,6 +207,52 @@ export default function StrumieniaPage() {
       </div>
 
       <Modal title={isEdit ? `Edytuj: ${editing.name}` : 'Nowy strumień wejściowy'} open={modal} onClose={() => setModal(false)} size="lg">
+        {!isEdit && labRunning && labProfiles.length > 0 && (
+          <div className="mb-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-sm font-semibold text-indigo-950">Import z aktywnych emulatorów labowych</p>
+                <p className="text-xs text-indigo-700 mt-1">Wybierz profil emulatora i automatycznie uzupełnij pola strumienia wejściowego.</p>
+              </div>
+              <span className="text-[11px] font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">Lab online</span>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {labProfiles.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setSelectedLabId(p.id)}
+                  className={`px-2.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${selectedLabId === p.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            {selectedLab && (
+              <div className="mt-3 rounded-lg border border-indigo-200 bg-white/80 p-3 text-xs text-gray-700">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="font-semibold text-gray-900">{selectedLab.label}</p>
+                  <button
+                    type="button"
+                    onClick={applyLabProfile}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700"
+                  >
+                    Importuj profil
+                  </button>
+                </div>
+                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <p><span className="font-semibold">Typ:</span> {selectedLab.type}</p>
+                  <p><span className="font-semibold">Protokół:</span> {selectedLab.protocol}</p>
+                  <p><span className="font-semibold">Adres:</span> <span className="font-mono">{selectedLab.sourceAddress}:{selectedLab.sourcePort}</span></p>
+                  {selectedLab.encryption && <p><span className="font-semibold">Szyfrowanie:</span> {selectedLab.encryption}</p>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-4">
           {([
             ['name', 'Nazwa', 'text'],

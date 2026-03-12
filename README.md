@@ -33,6 +33,22 @@ Example production env (Supabase):
 DATABASE_URL=postgresql://postgres:<password>@<project-ref>.supabase.co:5432/postgres
 ```
 
+## Narzędzia testowe (tools)
+
+- IPTV demo server (RTMP -> HLS):
+
+```bash
+pnpm iptv:demo-server
+```
+
+- Emulatory źródeł wejściowych (Backhaul, SRT, DVB-S2, DVB-T2, Radiolinia, Światłowód):
+
+```bash
+pnpm inputs:emulators
+```
+
+Po uruchomieniu emulatorów dashboard jest dostępny pod `http://127.0.0.1:8020`.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
