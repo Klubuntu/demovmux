@@ -259,6 +259,38 @@ async function initSchemaPostgres(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_epg_channel ON epg_programs(channel_id, start_at);
     CREATE INDEX IF NOT EXISTS idx_epg_date ON epg_programs(start_at);
   `);
+
+  // Idempotent migrations – add columns that may be missing in existing deployments
+  await runMigrationsPostgres(pool);
+}
+
+async function runMigrationsPostgres(pool: Pool): Promise<void> {
+  const safe = async (sql: string) => {
+    try { await pool.query(sql); } catch { /* already applied */ }
+  };
+  // multiplexes
+  await safe(`ALTER TABLE multiplexes ADD COLUMN IF NOT EXISTS number INTEGER`);
+  await safe(`ALTER TABLE multiplexes ADD COLUMN IF NOT EXISTS mux_type TEXT NOT NULL DEFAULT 'terrestrial'`);
+  await safe(`ALTER TABLE multiplexes ADD COLUMN IF NOT EXISTS radio_enabled INTEGER NOT NULL DEFAULT 0`);
+  await safe(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'multiplexes'::regclass AND contype = 'u' AND conname = 'multiplexes_number_key'
+      ) THEN
+        ALTER TABLE multiplexes ADD CONSTRAINT multiplexes_number_key UNIQUE (number);
+      END IF;
+    END $$
+  `);
+  // channels
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS stream_url TEXT`);
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS stream_type TEXT DEFAULT 'hls'`);
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS epg_source_url TEXT`);
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS epg_channel_id TEXT`);
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS channel_type TEXT NOT NULL DEFAULT 'tv'`);
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS audio_codec TEXT DEFAULT 'AAC'`);
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS sample_rate_hz INTEGER DEFAULT 48000`);
+  await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS stereo_mode TEXT DEFAULT 'stereo'`);
 }
 
 /** Returns true if the multiplexes table is empty (DB needs seeding). */

@@ -41,7 +41,12 @@ type MuxRow = {
   network_id: number | null; ts_id: number | null; onid: number | null;
   standard: string;
 };
-type ChannelRow = { id: number; name: string; number: number; };
+type ChannelRow = {
+  id: number;
+  name: string;
+  service_id: number | null;
+  lcn: number | null;
+};
 
 const TABLE_ORDER = ['PAT','PMT','NIT','SDT','EIT','TDT','TOT','MIP','BAT','AIT'];
 
@@ -67,7 +72,12 @@ function tablesForType(mux: MuxRow, channels: ChannelRow[]): {
   // PMT – one per channel (PID 0x0100 + channel index)
   channels.forEach((ch, i) => {
     rows.push({ table_type: 'PMT', pid: 0x0100 + i, cycle_ms: 100, enabled: 1,
-      payload_json: JSON.stringify({ service: ch.name, service_id: ch.number || (i + 1), video_pid: 0x0200 + i * 0x10, audio_pid: 0x0201 + i * 0x10 }) });
+      payload_json: JSON.stringify({
+        service: ch.name,
+        service_id: ch.service_id ?? ch.lcn ?? (i + 1),
+        video_pid: 0x0200 + i * 0x10,
+        audio_pid: 0x0201 + i * 0x10,
+      }) });
   });
 
   // NIT – terrestrial, satellite, cable (not IPTV)
@@ -133,7 +143,11 @@ export async function POST(req: Request) {
     }
 
     const channels = await dbAll<ChannelRow>(
-      'SELECT id, name, number FROM channels WHERE mux_id=? ORDER BY number', [mux_id]
+      `SELECT id, name, service_id, lcn
+       FROM channels
+       WHERE mux_id=?
+       ORDER BY COALESCE(service_id, lcn, id)`,
+      [mux_id]
     );
 
     const tables = tablesForType(mux, channels);
