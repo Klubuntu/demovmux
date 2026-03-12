@@ -30,7 +30,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     channel_type: 'tv', audio_codec: 'AAC', sample_rate_hz: 48000, stereo_mode: 'stereo',
     ...body, id,
   });
-  const row = await dbGet('SELECT * FROM channels WHERE id = ?', [id]);
+  const row = await dbGet('SELECT c.*, m.name as mux_name, m.mux_type FROM channels c JOIN multiplexes m ON m.id=c.mux_id WHERE c.id = ?', [id]);
   return NextResponse.json(row);
 }
 

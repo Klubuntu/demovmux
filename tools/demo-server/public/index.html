@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>demo-server · vMUX IPTV helper</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #020617;
+        color: #e2e8f0;
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+      .hero, .card {
+        background: linear-gradient(180deg, rgba(15,23,42,.95), rgba(15,23,42,.82));
+        border: 1px solid rgba(148,163,184,.18);
+        border-radius: 18px;
+        box-shadow: 0 20px 60px rgba(0,0,0,.35);
+      }
+      .hero { padding: 24px; margin-bottom: 18px; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+      .card { padding: 18px; }
+      .kicker {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: .18em;
+        color: #60a5fa;
+        font-weight: 700;
+      }
+      h1, h2, p { margin: 0; }
+      h1 { font-size: 32px; margin-top: 8px; }
+      h2 { font-size: 15px; margin-bottom: 10px; color: #f8fafc; }
+      p.sub { color: #94a3b8; margin-top: 10px; line-height: 1.55; }
+      code, pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: rgba(15,23,42,.9);
+        border: 1px solid rgba(148,163,184,.18);
+        border-radius: 12px;
+      }
+      code.inline {
+        display: inline-block;
+        padding: 2px 8px;
+        margin-top: 6px;
+        color: #bfdbfe;
+      }
+      pre {
+        padding: 12px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #cbd5e1;
+      }
+      ol, ul {
+        margin: 10px 0 0 18px;
+        color: #cbd5e1;
+        line-height: 1.6;
+      }
+      .muted { color: #94a3b8; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(96,165,250,.25);
+        background: rgba(30,41,59,.7);
+        color: #93c5fd;
+        font-size: 12px;
+        font-weight: 700;
+        margin-top: 12px;
+      }
+      a { color: #93c5fd; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="hero">
+        <div class="kicker">vMUX tools</div>
+        <h1>demo-server</h1>
+        <p class="sub">Lekki serwer testowy RTMP → HLS pod szybkie testy kanałów IPTV w vMUX. Wyślij stream na adres publish, a w panelu ustaw adres playback HLS.</p>
+        <div class="pill" id="status">Ładowanie konfiguracji…</div>
+      </section>
+      <div class="grid">
+        <section class="card">
+          <h2>Adres publish</h2>
+          <p class="muted">To adres, na który wysyłasz stream z OBS lub `ffmpeg`.</p>
+          <pre id="publishUrl">—</pre>
+          <h2 style="margin-top:16px">Adres odbioru do vMUX</h2>
+          <p class="muted">Wklej ten URL do pola „Adres strumienia” i wybierz protokół `HLS`.</p>
+          <pre id="playUrl">—</pre>
+        </section>
+        <section class="card">
+          <h2>Szybka instrukcja</h2>
+          <ol>
+            <li>Uruchom ten serwer.</li>
+            <li>Wyślij obraz na adres RTMP.</li>
+            <li>W vMUX ustaw HLS URL jako źródło kanału IPTV.</li>
+            <li>Otwórz emulator i naciśnij <strong>OK</strong>, by załadować podgląd.</li>
+          </ol>
+          <div class="pill" id="pathTemplate">Ścieżka: /live/&lt;nazwa-streamu&gt;/index.m3u8</div>
+        </section>
+        <section class="card">
+          <h2>Przykład `ffmpeg`</h2>
+          <pre id="ffmpegCmd">—</pre>
+        </section>
+        <section class="card">
+          <h2>OBS / encoder</h2>
+          <ul>
+            <li><strong>Server</strong>: użyj adresu RTMP bez końcowego slash.</li>
+            <li><strong>Stream key</strong>: wpisz nazwę streamu, np. <code class="inline" id="streamKey">demo</code>.</li>
+            <li>Playback HLS będzie dostępny pod wzorcem pokazanym obok.</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+    <script>
+      fetch('/runtime-config.json')
+        .then((r) => r.json())
+        .then((cfg) => {
+          document.getElementById('status').textContent = `RTMP ${cfg.rtmpPort} · HLS ${cfg.httpPort} · INFO ${cfg.infoPort}`;
+          document.getElementById('publishUrl').textContent = cfg.publishUrl;
+          document.getElementById('playUrl').textContent = cfg.playUrl;
+          document.getElementById('ffmpegCmd').textContent = cfg.ffmpegCommand;
+          document.getElementById('pathTemplate').textContent = `Ścieżka: /${cfg.streamApp}/<nazwa-streamu>/index.m3u8`;
+          document.getElementById('streamKey').textContent = cfg.streamKey;
+        })
+        .catch(() => {
+          document.getElementById('status').textContent = 'Nie udało się wczytać runtime-config.json';
+        });
+    </script>
+  </body>
+</html>

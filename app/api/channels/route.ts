@@ -27,8 +27,9 @@ export async function POST(req: Request) {
   `, {
     stream_url: null, stream_type: 'hls', epg_source_url: null, epg_channel_id: null,
     channel_type: 'tv', audio_codec: 'AAC', sample_rate_hz: 48000, stereo_mode: 'stereo',
+    input_stream_id: 1,
     ...body,
   });
-  const row = await dbGet('SELECT * FROM channels WHERE id = ?', [info.lastInsertRowid]);
+  const row = await dbGet('SELECT c.*, m.name as mux_name, m.mux_type FROM channels c JOIN multiplexes m ON m.id=c.mux_id WHERE c.id = ?', [info.lastInsertRowid]);
   return NextResponse.json(row, { status: 201 });
 }

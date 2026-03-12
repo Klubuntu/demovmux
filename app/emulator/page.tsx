@@ -1,19 +1,23 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Hls from 'hls.js';
 import {
   HelpCircle, X, Power, Volume2, VolumeX, Info, Home,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
-  Wifi, Satellite, Radio, Signal, Cpu, Database,
+  Wifi, Satellite, Radio, Signal, Cpu, Database, Maximize2, Minimize2,
 } from 'lucide-react';
 
 // ─────────────────────────── types ───────────────────────────
 interface Channel {
   id: number; name: string; lcn: number; mux_name: string; mux_id: number;
   mux_type: string; video_format: string; channel_type: string; status: string;
+  teletext_enabled?: number;
+  stream_type?: string | null; stream_url?: string | null;
 }
 interface Multiplex {
   id: number; name: string; number: number; standard: string;
   mux_type: string; status: string; channel_count: number;
+  frequency_mhz?: number;
 }
 interface SysInfo {
   dbType: string;
@@ -57,6 +61,8 @@ const MENU_ITEMS = [
   'Tryb odbioru', 'Informacje o systemie',
 ];
 
+const PREVIEW_STREAM_TYPES = new Set(['hls', 'rtmp', 'srt']);
+
 // ─────────────────────────── component ───────────────────────────
 export default function EmulatorPage() {
   const [progress, setProgress] = useState(0);
@@ -80,12 +86,21 @@ export default function EmulatorPage() {
   const [menuIdx, setMenuIdx]         = useState(0);
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
   const [pendingMuxJump, setPendingMuxJump] = useState<number | null>(null);
+  const [pendingChannelId, setPendingChannelId] = useState<number | null>(null);
+  const [previewArmed, setPreviewArmed] = useState(false);
+  const [previewActive, setPreviewActive] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
 
   const [osd, setOsd]       = useState<{ msg: string; vol: boolean } | null>(null);
   const [numBuf, setNumBuf] = useState('');
   const osdTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const numTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewRef = useRef<HTMLVideoElement | null>(null);
+  const previewViewportRef = useRef<HTMLDivElement | null>(null);
+  const lastSelectedChannelKey = useRef<string>('');
 
   // boot
   useEffect(() => {
@@ -100,18 +115,48 @@ export default function EmulatorPage() {
 
   // data
   useEffect(() => {
-    fetch('/api/channels').then(r => r.json())
-      .then((d: Channel[]) => setAllChannels(d.filter(c => c.status === 'active')));
-    fetch('/api/multiplexes').then(r => r.json()).then(setMultiplexes);
-    fetch('/api/settings').then(r => r.json()).then(setSysInfo).catch(() => null);
+    let mounted = true;
+    const load = () => {
+      fetch('/api/channels').then(r => r.json())
+        .then((d: Channel[]) => {
+          if (mounted) setAllChannels(d.filter(c => c.status === 'active'));
+        });
+      fetch('/api/multiplexes').then(r => r.json()).then(d => { if (mounted) setMultiplexes(d); });
+      fetch('/api/settings').then(r => r.json()).then(d => { if (mounted) setSysInfo(d); }).catch(() => null);
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => { mounted = false; clearInterval(interval); };
   }, []);
 
-  // filter channels when reception or allChannels changes, reset to first
-  // also handle pending mux jump (after reception switch)
+  // filter channels when reception or allChannels changes, zachowaj wybrany kanał
   useEffect(() => {
     const muxType = REC_TO_MUX[reception];
     const filtered = allChannels.filter(c => c.mux_type === muxType);
     setChannels(filtered);
+    // zachowaj wybrany kanał jeśli istnieje
+    if (filtered.length === 0) {
+      setChIdx(0);
+    } else if (channels.length > 0 && filtered.some(c => c.id === channels[chIdx]?.id)) {
+      // wybrany kanał nadal istnieje
+      setChIdx(filtered.findIndex(c => c.id === channels[chIdx]?.id));
+    } else {
+      setChIdx(0);
+    }
+    // obsługa pendingChannelId (np. wybór numeru kanału z innego typu odbioru)
+    if (pendingChannelId !== null) {
+      const idx = filtered.findIndex(c => c.id === pendingChannelId);
+      if (idx >= 0) {
+        setSwitching(true);
+        setTimeout(() => { setChIdx(idx); setSwitching(false); }, 200);
+      } else {
+        setChIdx(0);
+      }
+      setPendingChannelId(null);
+      setPendingMuxJump(null);
+      return;
+    }
+    // obsługa pendingMuxJump
     if (pendingMuxJump !== null) {
       const idx = filtered.findIndex(c => c.mux_id === pendingMuxJump);
       if (idx >= 0) {
@@ -121,18 +166,121 @@ export default function EmulatorPage() {
         setChIdx(0);
       }
       setPendingMuxJump(null);
-    } else {
-      setChIdx(0);
     }
-  }, [reception, allChannels]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reception, allChannels, pendingChannelId, pendingMuxJump]);
+  // obsługa długiego OK (longPress)
+  const [showChannelList, setShowChannelList] = useState(false);
+  const [channelListIdx, setChannelListIdx] = useState(0);
+  const okButtonRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        longPress.current = setTimeout(() => {
+          setShowChannelList(true);
+        }, 600);
+      }
+      // żółty przycisk (F2)
+      if (e.key === 'F2') {
+        setShowChannelList(true);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        if (longPress.current) {
+          clearTimeout(longPress.current);
+          longPress.current = null;
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+  // zamknij listę kanałów ESC
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowChannelList(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
-  // close context menu on click outside – use backdrop approach (no capture listener bug)
+  useEffect(() => {
+    if (showChannelList) setChannelListIdx(chIdx);
+  }, [showChannelList, chIdx]);
+
+  useEffect(() => {
+    if (channels.length === 0) {
+      setChannelListIdx(0);
+      return;
+    }
+    setChannelListIdx(i => Math.min(Math.max(i, 0), channels.length - 1));
+  }, [channels.length]);
+  // komponent pełnoekranowej listy kanałów
+  const ChannelListOverlay = (
+    <div className="fixed inset-0 z-50 bg-black bg-opacity-80 flex flex-col">
+      <div className="flex items-center justify-between p-4 border-b border-gray-700">
+        <h2 className="text-xl font-bold text-white">Lista kanałów ({channels.length})</h2>
+        <button onClick={() => setShowChannelList(false)} className="text-white text-2xl">×</button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <table className="w-full text-sm text-white">
+          <thead>
+            <tr className="bg-gray-800">
+              <th className="px-4 py-2 text-left">Nr</th>
+              <th className="px-4 py-2 text-left">Nazwa</th>
+              <th className="px-4 py-2 text-left">Częstotliwość</th>
+              <th className="px-4 py-2 text-left">MUX</th>
+            </tr>
+          </thead>
+          <tbody>
+            {channels.map((c, i) => (
+              <tr
+                key={c.id}
+                onClick={() => selectChannelFromList(i)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    selectChannelFromList(i);
+                  }
+                }}
+                tabIndex={0}
+                className={`${i === channelListIdx ? 'bg-indigo-700' : 'bg-gray-900'} cursor-pointer hover:bg-indigo-800/70 focus:outline-none focus:ring-2 focus:ring-indigo-400/70`}
+              >
+                <td className="px-4 py-2 font-mono">{c.lcn}</td>
+                <td className="px-4 py-2">{c.name}</td>
+                <td className="px-4 py-2">{multiplexes.find(m => m.id === c.mux_id)?.frequency_mhz ?? '-'}</td>
+                <td className="px-4 py-2">{c.mux_name}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
   const flashOsd = useCallback((msg: string, vol = false) => {
     setOsd({ msg, vol });
     if (osdTimer.current) clearTimeout(osdTimer.current);
     osdTimer.current = setTimeout(() => setOsd(null), 2500);
   }, []);
+
+  const isPreviewEligible = useCallback((channel?: Channel | null) => {
+    if (!channel || channel.channel_type === 'radio') return false;
+    if (!channel.stream_url) return false;
+    return PREVIEW_STREAM_TYPES.has((channel.stream_type ?? '').toLowerCase());
+  }, []);
+
+  const resetPreview = useCallback((channel?: Channel | null) => {
+    const eligible = isPreviewEligible(channel);
+    setPreviewActive(false);
+    setPreviewLoading(false);
+    setPreviewError(null);
+    setPreviewArmed(eligible);
+  }, [isPreviewEligible]);
 
   const chUp = useCallback(() => {
     if (!powered || channels.length === 0) return;
@@ -163,6 +311,59 @@ export default function EmulatorPage() {
     });
   }, [flashOsd]);
 
+  const commitNumericZap = useCallback((forcedBuf?: string) => {
+    if (!powered) return false;
+    const buf = (forcedBuf ?? numBuf).trim();
+    if (!buf) return false;
+    if (numTimer.current) {
+      clearTimeout(numTimer.current);
+      numTimer.current = null;
+    }
+
+    const lcn = Number.parseInt(buf, 10);
+    if (!Number.isFinite(lcn)) {
+      setNumBuf('');
+      return false;
+    }
+
+    const currentMatch = channels.find(c => c.lcn === lcn);
+    if (currentMatch) {
+      const idx = channels.findIndex(c => c.id === currentMatch.id);
+      setSwitching(true);
+      setTimeout(() => { setChIdx(idx); setSwitching(false); }, 200);
+      flashOsd(`Kanał ${lcn}: ${currentMatch.name}`);
+      setNumBuf('');
+      return true;
+    }
+
+    const globalMatch = allChannels.find(c => c.lcn === lcn);
+    if (!globalMatch) {
+      flashOsd(`Kanał ${lcn} niedostępny`);
+      setNumBuf('');
+      return false;
+    }
+
+    const targetReception = (Object.entries(REC_TO_MUX).find(([, muxType]) => muxType === globalMatch.mux_type)?.[0] ?? null) as ReceptionType | null;
+    flashOsd(`Kanał ${lcn}: ${globalMatch.name}`);
+    setNumBuf('');
+
+    if (targetReception && targetReception !== reception) {
+      setPendingChannelId(globalMatch.id);
+      setReception(targetReception);
+      return true;
+    }
+
+    const idx = channels.findIndex(c => c.id === globalMatch.id);
+    if (idx >= 0) {
+      setSwitching(true);
+      setTimeout(() => { setChIdx(idx); setSwitching(false); }, 200);
+      return true;
+    }
+
+    setPendingChannelId(globalMatch.id);
+    return true;
+  }, [powered, numBuf, channels, allChannels, reception, flashOsd]);
+
   const pressNum = useCallback((n: string) => {
     if (!powered) return;
     const buf = (numBuf + n).slice(-3);
@@ -170,14 +371,27 @@ export default function EmulatorPage() {
     flashOsd(`Kanał: ${buf}`);
     if (numTimer.current) clearTimeout(numTimer.current);
     numTimer.current = setTimeout(() => {
-      const target = parseInt(buf) - 1;
-      if (target >= 0 && target < channels.length) {
-        setSwitching(true);
-        setTimeout(() => { setChIdx(target); setSwitching(false); }, 200);
-      }
-      setNumBuf('');
+      commitNumericZap(buf);
     }, 1500);
-  }, [powered, numBuf, channels, flashOsd]);
+  }, [powered, numBuf, flashOsd, commitNumericZap]);
+
+  const activatePreview = useCallback(() => {
+    const currentChannel = channels[chIdx];
+    if (!powered || !currentChannel) return;
+    if (previewActive || previewLoading) {
+      flashOsd('Podgląd kanału już aktywny');
+      return;
+    }
+    if (!isPreviewEligible(currentChannel)) {
+      flashOsd('Brak podglądu dla tego kanału');
+      return;
+    }
+    setPreviewArmed(false);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    setPreviewActive(true);
+    flashOsd(`Ładowanie podglądu: ${currentChannel.name}`);
+  }, [channels, chIdx, powered, previewActive, previewLoading, isPreviewEligible, flashOsd]);
 
   const jumpToMux = useCallback((muxId: number, recType: ReceptionType) => {
     const mux = multiplexes.find(m => m.id === muxId);
@@ -225,18 +439,187 @@ export default function EmulatorPage() {
     else flashOsd(item);
   }, [flashOsd]);
 
+  const ch  = channels[chIdx];
+  const rec = RECEPTION[reception];
+  const sig = 72 + ((chIdx * 7 + 13) % 22);
+  const previewEligible = isPreviewEligible(ch);
+  const selectedChannelKey = ch ? `${ch.id}|${ch.stream_type ?? ''}|${ch.stream_url ?? ''}|${ch.channel_type ?? ''}` : 'none';
+
+  const openChannelList = useCallback(() => {
+    if (!powered) return;
+    setShowChannelList(true);
+    setChannelListIdx(chIdx);
+  }, [powered, chIdx]);
+
+  const selectChannelFromList = useCallback((idx: number) => {
+    if (!powered) return;
+    const target = channels[idx];
+    if (!target) return;
+    setShowChannelList(false);
+    if (idx === chIdx) return;
+    setSwitching(true);
+    setTimeout(() => { setChIdx(idx); setSwitching(false); }, 200);
+  }, [powered, channels, chIdx]);
+
+  const openTeletext = useCallback(() => {
+    if (!powered || !ch) return;
+    if (ch.channel_type === 'radio' || !ch.teletext_enabled) {
+      flashOsd('Teletext niedostępny');
+      return;
+    }
+    flashOsd('Teletext');
+  }, [powered, ch, flashOsd]);
+
+  const togglePreviewFullscreen = useCallback(async () => {
+    if (!previewActive || !ch?.stream_url) return;
+    const target = previewViewportRef.current ?? previewRef.current;
+    if (!target) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await target.requestFullscreen();
+    } catch {
+      flashOsd('Fullscreen niedostępny');
+    }
+  }, [previewActive, ch?.stream_url, flashOsd]);
+
+  useEffect(() => {
+    const onFsChange = () => setPreviewFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  useEffect(() => {
+    if (selectedChannelKey === lastSelectedChannelKey.current) return;
+    lastSelectedChannelKey.current = selectedChannelKey;
+    resetPreview(channels[chIdx]);
+  }, [selectedChannelKey, channels, chIdx, resetPreview]);
+
+  useEffect(() => {
+    if (!powered) resetPreview(null);
+  }, [powered, resetPreview]);
+
+  useEffect(() => {
+    if (!previewActive || !ch?.stream_url || !previewRef.current) return;
+
+    const video = previewRef.current;
+    const streamUrl = ch.stream_url;
+    const streamType = (ch.stream_type ?? '').toLowerCase();
+    let hls: Hls | null = null;
+    let cancelled = false;
+    let settled = false;
+    let loadingTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.muted = muted;
+    video.volume = muted ? 0 : volume / 100;
+
+    const markLoaded = () => {
+      if (settled) return;
+      settled = true;
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+      if (!cancelled) {
+        setPreviewLoading(false);
+        setPreviewError(null);
+      }
+    };
+
+    const markError = () => {
+      if (settled) return;
+      settled = true;
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+      if (!cancelled) {
+        setPreviewLoading(false);
+        setPreviewError('Nie udało się załadować podglądu kanału');
+      }
+    };
+
+    loadingTimeout = setTimeout(() => {
+      markError();
+    }, 12000);
+
+    const tryPlay = async () => {
+      try {
+        await video.play();
+        markLoaded();
+      } catch {
+        markError();
+      }
+    };
+
+    const onLoadedData = () => {
+      void tryPlay();
+    };
+    const onError = () => {
+      markError();
+    };
+
+    video.addEventListener('loadeddata', onLoadedData);
+    video.addEventListener('error', onError);
+
+    if (streamType === 'hls' && Hls.isSupported()) {
+      hls = new Hls({ lowLatencyMode: true, enableWorker: true });
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        void tryPlay();
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) markError();
+      });
+    } else {
+      video.src = streamUrl;
+      void tryPlay();
+    }
+
+    return () => {
+      cancelled = true;
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+      video.removeEventListener('loadeddata', onLoadedData);
+      video.removeEventListener('error', onError);
+      video.pause();
+      if (hls) hls.destroy();
+      video.removeAttribute('src');
+      video.load();
+    };
+  }, [previewActive, ch?.id, ch?.stream_url, ch?.stream_type]);
+
+  useEffect(() => {
+    const video = previewRef.current;
+    if (!video) return;
+    video.muted = muted;
+    video.volume = muted ? 0 : volume / 100;
+  }, [muted, volume]);
+
   // keyboard
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       switch (e.key) {
-        case 'ArrowUp':    e.preventDefault(); if (showMenu) setMenuIdx(i => Math.max(0, i-1)); else chUp(); break;
-        case 'ArrowDown':  e.preventDefault(); if (showMenu) setMenuIdx(i => Math.min(MENU_ITEMS.length-1, i+1)); else chDown(); break;
+        case 'ArrowUp':
+          e.preventDefault();
+          if (showChannelList) setChannelListIdx(i => Math.max(0, i - 1));
+          else if (showMenu) setMenuIdx(i => Math.max(0, i - 1));
+          else chUp();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          if (showChannelList) setChannelListIdx(i => Math.min(channels.length - 1, i + 1));
+          else if (showMenu) setMenuIdx(i => Math.min(MENU_ITEMS.length - 1, i + 1));
+          else chDown();
+          break;
         case 'ArrowLeft':  e.preventDefault(); volDown(); break;
         case 'ArrowRight': e.preventDefault(); volUp();   break;
-        case 'Enter':      e.preventDefault(); if (showMenu) handleMenuSelect(MENU_ITEMS[menuIdx], menuIdx); break;
+        case 'Enter':
+          e.preventDefault();
+          if (showChannelList) selectChannelFromList(channelListIdx);
+          else if (showMenu) handleMenuSelect(MENU_ITEMS[menuIdx], menuIdx);
+          else if (numBuf) commitNumericZap();
+          else activatePreview();
+          break;
         case 'Escape': case 'Backspace':
-          setShowMenu(false); setShowInfo(false); setShowHelp(false); setShowSysInfo(false); setCtxMenu(null); break;
+          setShowChannelList(false); setShowMenu(false); setShowInfo(false); setShowHelp(false); setShowSysInfo(false); setCtxMenu(null); break;
         case 'i': case 'I': if (powered) setShowInfo(v => !v); break;
         case 'm': case 'M': if (powered) setShowMenu(v => !v); break;
         case 't': case 'T': cycleReception(); break;
@@ -247,11 +630,7 @@ export default function EmulatorPage() {
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [chUp, chDown, volUp, volDown, cycleReception, pressNum, powered, showMenu, menuIdx, handleMenuSelect]);
-
-  const ch  = channels[chIdx];
-  const rec = RECEPTION[reception];
-  const sig = 72 + ((chIdx * 7 + 13) % 22);
+  }, [chUp, chDown, volUp, volDown, cycleReception, pressNum, powered, showMenu, menuIdx, handleMenuSelect, numBuf, commitNumericZap, activatePreview, showChannelList, channelListIdx, channels.length, selectChannelFromList]);
 
   // ══ BOOT ══
   if (!booted) return (
@@ -284,6 +663,7 @@ export default function EmulatorPage() {
   // ══ MAIN ══
   return (
     <div className="bg-gray-950 rounded-2xl overflow-hidden border border-gray-800 shadow-2xl min-h-[calc(100vh-7rem)]">
+      {showChannelList && ChannelListOverlay}
 
       {/* top bar */}
       <div
@@ -332,7 +712,7 @@ export default function EmulatorPage() {
           />
           <div
             className="fixed z-[200] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto min-w-60"
-            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            style={{ left: ctxMenu?.x ?? 0, top: ctxMenu?.y ?? 0 }}
           >
             <div className="px-4 py-2 border-b border-gray-800 bg-gray-950/80">
               <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Wszystkie multipleksy</p>
@@ -430,7 +810,7 @@ export default function EmulatorPage() {
 
                 {/* ON */}
                 {powered && !switching && ch && (
-                  <div className="absolute inset-0">
+                  <div className="absolute inset-0" ref={previewViewportRef}>
                     <div className="absolute inset-0"
                       style={{background:`radial-gradient(ellipse at 30% 40%, hsl(${(chIdx*47+200)%360},30%,12%) 0%,#0a0a0a 70%)`}}/>
 
@@ -447,11 +827,61 @@ export default function EmulatorPage() {
                             ))}
                           </div>
                         </div>
+                      ) : previewActive && ch.stream_url ? (
+                        <>
+                          <video
+                            ref={previewRef}
+                            className="absolute inset-0 h-full w-full object-cover"
+                            playsInline
+                            autoPlay
+                            controls={false}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-black/25 pointer-events-none" />
+                          <button
+                            onClick={togglePreviewFullscreen}
+                            className="absolute top-3 right-3 z-20 h-9 w-9 rounded-full bg-black/70 hover:bg-black/85 border border-white/15 text-white flex items-center justify-center transition-colors"
+                            title={previewFullscreen ? 'Wyjdź z fullscreen' : 'Fullscreen'}
+                            aria-label={previewFullscreen ? 'Wyjdź z fullscreen' : 'Fullscreen'}
+                          >
+                            {previewFullscreen ? <Minimize2 size={15}/> : <Maximize2 size={15}/>}
+                          </button>
+                          {(previewLoading || previewError) && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/45 backdrop-blur-[2px] px-6 text-center">
+                              <div>
+                                {previewLoading && (
+                                  <>
+                                    <div className="mx-auto mb-4 flex gap-1.5 justify-center">
+                                      {[0,1,2].map(i=>(
+                                        <div key={i} className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay:`${i*120}ms`}}/>
+                                      ))}
+                                    </div>
+                                    <p className="text-white text-sm font-semibold">Ładowanie realtime preview…</p>
+                                  </>
+                                )}
+                                {previewError && (
+                                  <>
+                                    <p className="text-red-300 text-sm font-semibold">{previewError}</p>
+                                    <p className="text-gray-300 text-xs mt-2">
+                                      Sprawdź, czy URL strumienia jest dostępny z przeglądarki i obsługuje odtwarzanie HTML5.
+                                    </p>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <div className="text-center px-8">
                           <p className="text-gray-600 text-[10px] uppercase tracking-[0.3em] mb-2">{ch.mux_name}</p>
                           <p className="text-white text-3xl font-black tracking-tight">{ch.name}</p>
                           <p className="text-gray-500 text-sm mt-2">{ch.video_format} · {rec.label}</p>
+                          {previewEligible && previewArmed && (
+                            <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-500/40 bg-blue-950/60 px-4 py-2">
+                              <span className="text-blue-300 text-[10px] font-semibold uppercase tracking-[0.25em]">
+                                Naciśnij OK aby załadować podgląd kanału
+                              </span>
+                            </div>
+                          )}
                           <div className="mt-6 flex items-center justify-center gap-1.5">
                             <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"/>
                             <span className="text-gray-600 text-xs uppercase tracking-widest">na żywo</span>
@@ -500,9 +930,9 @@ export default function EmulatorPage() {
                     )}
 
                     {/* text OSD */}
-                    {osd&&!osd.vol&&(
+                    {osd?.msg && !osd?.vol && (
                       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/85 backdrop-blur-sm rounded-xl px-5 py-2.5">
-                        <p className="text-white text-sm font-medium whitespace-nowrap">{osd.msg}</p>
+                        <p className="text-white text-sm font-medium whitespace-nowrap">{osd?.msg}</p>
                       </div>
                     )}
 
@@ -664,7 +1094,7 @@ export default function EmulatorPage() {
                 <button onClick={volDown} title="VOL− (←)" className="absolute left-0 top-1/2 -translate-y-1/2 w-11 h-11 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center text-white transition-colors active:scale-90 shadow"><ChevronLeft size={18}/></button>
                 <button onClick={volUp} title="VOL+ (→)" className="absolute right-0 top-1/2 -translate-y-1/2 w-11 h-11 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center text-white transition-colors active:scale-90 shadow"><ChevronRight size={18}/></button>
                 <button
-                  onClick={()=>{if(showMenu)handleMenuSelect(MENU_ITEMS[menuIdx],menuIdx);else flashOsd('OK');}}
+                  onClick={()=>{if(showMenu)handleMenuSelect(MENU_ITEMS[menuIdx],menuIdx);else if(numBuf)commitNumericZap();else activatePreview();}}
                   className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-sm transition-all active:scale-90 shadow-lg ring-2 ${rec.ring}`}
                   style={{background:'linear-gradient(135deg,#2563eb,#1d4ed8)'}}>OK
                 </button>
@@ -688,9 +1118,9 @@ export default function EmulatorPage() {
 
             <div className="grid grid-cols-4 gap-1">
               {([
-                ['bg-red-600 hover:bg-red-500',()=>flashOsd('Teletext')],
+                ['bg-red-600 hover:bg-red-500',openTeletext],
                 ['bg-green-600 hover:bg-green-500',()=>flashOsd('Ulubione')],
-                ['bg-yellow-500 hover:bg-yellow-400',()=>flashOsd('Lista kanałów')],
+                ['bg-yellow-500 hover:bg-yellow-400',openChannelList],
                 ['bg-blue-600 hover:bg-blue-500',()=>{if(powered)setShowSysInfo(v=>!v);}],
               ] as [string,()=>void][]).map(([cls,fn],i)=>(
                 <button key={i} onClick={fn}

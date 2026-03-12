@@ -1,0 +1,17 @@
+{
+  "name": "@demovmux/demo-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lekki serwer testowy RTMP -> HLS dla demo vMUX",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "node-media-server": "^2.7.4"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "host": "127.0.0.1",
+  "rtmpPort": 1935,
+  "httpPort": 8000,
+  "infoPort": 8010,
+  "streamApp": "live",
+  "streamKey": "demo",
+  "publishUrl": "rtmp://127.0.0.1:1935/live/demo",
+  "playUrl": "http://127.0.0.1:8000/live/demo/index.m3u8",
+  "flvUrl": "http://127.0.0.1:8000/live/demo.flv",
+  "ffmpegCommand": "ffmpeg -re -stream_loop -1 -i ./sample.mp4 -c:v libx264 -preset veryfast -tune zerolatency -c:a aac -ar 48000 -b:a 128k -f flv rtmp://127.0.0.1:1935/live/demo"
+}

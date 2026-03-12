@@ -20,6 +20,17 @@ interface Channel {
 }
 
 interface Mux { id: number; name: string; number: number; mux_type: string; radio_enabled: number; }
+interface InputStream {
+  id: number;
+  name: string;
+  broadcaster?: string | null;
+  type?: string | null;
+  protocol?: string | null;
+  source_address?: string | null;
+  source_port?: number | null;
+  bitrate_mbps?: number | null;
+  status?: string;
+}
 
 const defaultCh: Partial<Channel> = {
   name: '', short_name: '', lcn: 0, service_id: 0, pmt_pid: 4096, video_pid: 4097,
@@ -43,6 +54,7 @@ const STREAM_TYPE_COLORS: Record<string, string> = {
 export default function KanalyPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [muxes, setMuxes] = useState<Mux[]>([]);
+  const [streams, setStreams] = useState<InputStream[]>([]);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<Partial<Channel>>(defaultCh);
   const [isEdit, setIsEdit] = useState(false);
@@ -55,24 +67,38 @@ export default function KanalyPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetch('/api/multiplexes').then(r => r.json()).then(setMuxes); }, []);
+  useEffect(() => { fetch('/api/streams').then(r => r.json()).then(setStreams); }, []);
 
   const selectedMux = muxes.find(m => m.id === (editing.mux_id ?? muxes[0]?.id));
+  const selectedStream = streams.find(s => s.id === Number(editing.input_stream_id));
   const isIptv = selectedMux?.mux_type === 'iptv';
   const isRadio = editing.channel_type === 'radio' || selectedMux?.radio_enabled === 1;
 
   const openCreate = () => {
-    setEditing({ ...defaultCh, mux_id: muxes[0]?.id });
+    const defaultMuxId = filterMux ? Number(filterMux) : (muxes[0]?.id ?? 0);
+    setEditing({ ...defaultCh, mux_id: defaultMuxId });
     setIsEdit(false); setModal(true);
   };
   const openEdit = (c: Channel) => { setEditing(c); setIsEdit(true); setModal(true); };
 
   const save = async () => {
-    if (isEdit) {
-      await fetch(`/api/channels/${editing.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editing) });
-    } else {
-      await fetch('/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editing) });
+    try {
+      const payload = {
+        ...editing,
+        input_stream_id: isIptv ? null : editing.input_stream_id,
+      };
+      if (isEdit) {
+        const res = await fetch(`/api/channels/${editing.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error(`Błąd: ${res.statusText}`);
+      } else {
+        const res = await fetch('/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error(`Błąd: ${res.statusText}`);
+      }
+      setModal(false);
+      await load();
+    } catch (err) {
+      alert(`Błąd przy zapisywaniu: ${err instanceof Error ? err.message : 'nieznany błąd'}`);
     }
-    setModal(false); load();
   };
 
   const del = async (id: number) => {
@@ -205,6 +231,44 @@ export default function KanalyPage() {
                 </select>
               </div>
 
+              {!isIptv && (
+                <div className="col-span-2">
+                  <label className="flex items-center gap-1 text-xs font-medium text-gray-700 mb-1">
+                    Źródłowy strumień wejściowy <FieldHint text="Wskaż, z którego wejścia (input stream) kanał jest dostarczany do multipleksera. To pole mapuje kanał na rekord w tabeli input_streams." />
+                  </label>
+                  <select
+                    value={String(editing.input_stream_id ?? '')}
+                    onChange={e => f('input_stream_id', e.target.value ? Number(e.target.value) : null)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">— Brak przypisania —</option>
+                    {streams.map(s => (
+                      <option key={s.id} value={s.id}>
+                        #{s.id} · {s.name} {s.protocol ? `(${s.protocol.toUpperCase()})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedStream ? (
+                    <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+                      <p className="font-semibold">Wybrane źródło: {selectedStream.name}</p>
+                      <p className="mt-0.5 text-blue-800">
+                        ID: {selectedStream.id}
+                        {selectedStream.type ? ` · Typ: ${selectedStream.type}` : ''}
+                        {selectedStream.protocol ? ` · Protokół: ${selectedStream.protocol.toUpperCase()}` : ''}
+                        {selectedStream.bitrate_mbps ? ` · Bitrate: ${selectedStream.bitrate_mbps} Mbps` : ''}
+                      </p>
+                      {(selectedStream.source_address || selectedStream.source_port) && (
+                        <p className="mt-0.5 font-mono text-blue-700">
+                          Źródło: {selectedStream.source_address ?? '-'}{selectedStream.source_port ? `:${selectedStream.source_port}` : ''}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs text-gray-500">Kanał nie ma przypisanego źródła wejściowego.</p>
+                  )}
+                </div>
+              )}
+
               {([
                 ['name', 'Nazwa kanału', 'text'],
                 ['short_name', 'Krótka nazwa', 'text', undefined, 'Skrócona nazwa (do 8 znaków) używana w tabelach SI/EPG i na niektórych pilotach DVB (pole short_name w SDT).'],
@@ -256,6 +320,14 @@ export default function KanalyPage() {
                   <Wifi size={14} className="text-indigo-500" />
                   <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Ustawienia IPTV / Strumień</span>
                   {!isIptv && <span className="text-xs text-gray-400">(dostępne tylko dla multipleksów IPTV)</span>}
+                </div>
+                <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-xs text-indigo-900">
+                  <p className="font-semibold">Szybki test lokalnego IPTV</p>
+                  <p className="mt-1 text-indigo-800">
+                    Uruchom serwer testowy z folderu <span className="font-mono">tools/demo-server</span> poleceniem <span className="font-mono">pnpm install</span> i potem <span className="font-mono">pnpm start</span>
+                    albo z root projektu <span className="font-mono">pnpm iptv:demo-server</span>. Skopiuj adres HLS pokazany w konsoli lub na stronie pomocy, wklej go do pola poniżej,
+                    ustaw protokół <span className="font-mono">HLS</span>, zapisz kanał i sprawdź podgląd w emulatorze przyciskiem <span className="font-mono">OK</span>.
+                  </p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
