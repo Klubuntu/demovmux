@@ -19,6 +19,18 @@ interface RuntimeProfile {
   sourceHint?: string;
 }
 
+async function isLabDashboardOnline() {
+  try {
+    const res = await fetch('http://127.0.0.1:8020/', {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(1000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchStatus(port: number) {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/status`, {
@@ -37,6 +49,7 @@ export async function GET() {
     const cfgPath = path.join(process.cwd(), 'tools', 'input-emulators', 'public', 'runtime-config.json');
     const raw = await fs.readFile(cfgPath, 'utf8');
     const cfg = JSON.parse(raw) as { generatedAt: string; dashboardUrl: string; profiles: RuntimeProfile[] };
+    const dashboardOnline = await isLabDashboardOnline();
 
     const profiles = await Promise.all(
       (cfg.profiles ?? []).map(async (p) => {
@@ -50,7 +63,8 @@ export async function GET() {
     );
 
     return NextResponse.json({
-      running: true,
+      running: dashboardOnline,
+      dashboardOnline,
       generatedAt: cfg.generatedAt,
       dashboardUrl: cfg.dashboardUrl,
       profiles,
@@ -58,6 +72,7 @@ export async function GET() {
   } catch {
     return NextResponse.json({
       running: false,
+      dashboardOnline: false,
       profiles: [],
       message: 'Input emulators are not running or runtime-config.json is missing',
     });

@@ -80,9 +80,14 @@ export default function MultipleksyPage() {
                     <StatusBadge value={m.status} type="mux" />
                     {m.mux_type === 'iptv' && (
                       <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-semibold">IPTV</span>
-                    )}                      {m.radio_enabled === 1 && (
-                        <span className="text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded font-semibold">📻 Radio</span>
-                      )}                  </div>
+                    )}
+                    {m.mux_type === 'radio' && (
+                      <span className="text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded font-semibold">Radio MUX</span>
+                    )}
+                    {m.radio_enabled === 1 && (
+                      <span className="text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded font-semibold">📻 Radio</span>
+                    )}
+                  </div>
                   <p className="text-xs text-gray-400">{m.standard} · {m.video_codec} · {m.mux_type === 'iptv' ? 'Stream IP' : m.modulation}</p>
                 </div>
               </div>
@@ -103,7 +108,7 @@ export default function MultipleksyPage() {
               <div className="grid grid-cols-3 gap-3 text-xs mb-4">
                 <div className="bg-indigo-50 rounded-lg px-3 py-2 col-span-2">
                   <p className="text-indigo-400">Typ strumienia</p>
-                  <p className="font-medium text-indigo-800">Strumień IP · HLS / RTMP / SRT</p>
+                  <p className="font-medium text-indigo-800">Strumień IP · HLS / RTMP / SRT / DASH / MLD</p>
                 </div>
                 <div className="bg-indigo-50 rounded-lg px-3 py-2">
                   <p className="text-indigo-400">Sieć</p>
@@ -150,7 +155,7 @@ export default function MultipleksyPage() {
           {([
             ['name', 'Nazwa', 'text'],
             ['number', 'Numer MUX', 'number', undefined, 'Unikalny numer identyfikacyjny multipleksu w sieci DVB (np. 1–8 dla naziemnej).'],
-            ['mux_type', 'Typ MUX', 'select', ['terrestrial', 'iptv', 'satellite', 'cable'], 'terrestrial = naziemny DVB-T/T2 · iptv = platforma internetowa · satellite = satelitarny · cable = kablowy DVB-C'],
+            ['mux_type', 'Typ MUX', 'select', ['terrestrial', 'iptv', 'radio', 'satellite', 'cable'], 'terrestrial = naziemny DVB-T/T2 · iptv = platforma internetowa · radio = multipleks radiowy / audio · satellite = satelitarny · cable = kablowy DVB-C'],
             ['radio_enabled', 'Obsługa radia (Icecast)', 'select', ['0', '1'], 'Włącza możliwość dodania kanałów radiowych (audio-only) przesyłanych przez Icecast/Shoutcast do tego multipleksu.'],
             ['standard', 'Standard', 'select', ['DVB-T2', 'DVB-T', 'IPTV', 'DVB-S2', 'DVB-C'], 'Norma transmisji cyfrowej. DVB-T2 to aktualny standard naziemny w Polsce (obowiązuje od 2022).'],
             ['video_codec', 'Kodek wideo', 'select', ['HEVC', 'MPEG-4', 'MPEG-2', 'H.264', 'H.265'], 'HEVC (H.265) wymagany dla DVB-T2 w Polsce. MPEG-2 stosowany w starszych MUX-ach DVB-T.'],

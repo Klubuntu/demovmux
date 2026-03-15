@@ -32,3 +32,7 @@ ALTER TABLE channels ADD COLUMN IF NOT EXISTS channel_type    TEXT NOT NULL DEFA
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS audio_codec     TEXT DEFAULT 'AAC';
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS sample_rate_hz  INTEGER DEFAULT 48000;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS stereo_mode     TEXT DEFAULT 'stereo';
+
+-- input_streams: physical vs virtual source mode
+ALTER TABLE input_streams ADD COLUMN IF NOT EXISTS mode               TEXT NOT NULL DEFAULT 'physical';
+ALTER TABLE input_streams ADD COLUMN IF NOT EXISTS emulator_profile_id TEXT;

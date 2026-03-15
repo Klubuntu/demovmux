@@ -75,9 +75,13 @@
       .hero p { margin:8px 0 0; color:#b5c5db; font-size:14px; max-width:760px; }
       .meta-grid,.connector-grid,.stats-grid { display:grid; gap:12px; }
       .meta-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
-      .connector-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .connector-grid { grid-template-columns:minmax(120px,150px) minmax(0,1fr); }
       .stats-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
       .panel { border:1px solid var(--line); background:rgba(13,23,38,0.86); border-radius:12px; padding:16px; }
+      .connector-panel-muted { background:rgba(9,16,29,0.46); border-color:rgba(148,163,184,0.08); min-width:120px; max-width:150px; }
+      .connector-panel-muted h4 { color:#8fa4c0; font-size:12px; font-weight:600; letter-spacing:0.03em; }
+      .connector-grid-column { display:grid; grid-template-columns:1fr; gap:10px; margin-top:12px; }
+      .connector-grid-column .metric { background:rgba(6,11,18,0.58); border-color:rgba(148,163,184,0.08); }
       .metric { border:1px solid var(--line); background:rgba(7,14,24,0.74); border-radius:10px; padding:14px; }
       .metric .label { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:0.08em; }
       .metric .value { display:block; margin-top:8px; font-size:16px; font-weight:800; line-height:1.35; word-break:break-word; }
@@ -168,9 +172,9 @@
             <section class="meta-grid" id="metaGrid"></section>
 
             <section class="connector-grid">
-              <div class="panel">
+              <div class="panel connector-panel-muted">
                 <h4>Złącza testowe</h4>
-                <div class="stats-grid" id="connectorGrid" style="margin-top:12px;"></div>
+                <div class="connector-grid-column" id="connectorGrid"></div>
               </div>
 
               <div class="panel">
@@ -186,15 +190,15 @@
     <div class="modal-backdrop" id="modalBackdrop">
       <div class="modal">
         <h3>Dodaj urządzenie</h3>
-        <p>Wybierz kategorię i model urządzenia. Pod spodem od razu zobaczysz czytelny podgląd portów i gotowe dane do podpięcia OBS/bridge.</p>
+        <p>Dodawanie działa niezależnie od aktywnej kategorii na górze. Możesz wybrać urządzenie z dowolnej kategorii bez przełączania widoku.</p>
         <div class="modal-steps">
-          <span class="step-pill">1. Kategoria</span>
+          <span class="step-pill">1. Filtr (opcjonalnie)</span>
           <span class="step-pill">2. Urządzenie</span>
-          <span class="step-pill">3. Gotowy preset</span>
+          <span class="step-pill">3. Dodaj i testuj</span>
         </div>
         <div class="field-grid">
           <div class="field">
-            <label for="categorySelect">Kategoria</label>
+            <label for="categorySelect">Filtr kategorii (opcjonalnie)</label>
             <select id="categorySelect"></select>
           </div>
           <div class="field">
@@ -278,16 +282,74 @@
           .replaceAll('"', '&quot;')
           .replaceAll("'", '&#39;');
       }
-      function buildObsSrtCallerPreset(profile) {
+      function pickPhysicalObsEquivalent(template) {
+        const ports = (template?.physicalPorts || []).map((port) => String(port));
+        if (!ports.length) return 'Wejście liniowe AV';
+
+        const priorities = ['SDI IN', '3G-SDI IN', '12G-SDI IN', 'SDI', 'ASI IN', 'ASI', 'HDMI IN', 'HDMI', 'ST 2110', 'IP IN', 'RJ45', 'ETHERNET', 'USB'];
+        for (const token of priorities) {
+          const match = ports.find((port) => port.toUpperCase().includes(token));
+          if (match) return match;
+        }
+        return ports[0];
+      }
+
+      function extractEmulatableInputs(template) {
+        const physicalPorts = (template?.physicalPorts || []);
+        const splitPorts = physicalPorts.flatMap((port) => String(port).split(/\s*[\/|,]\s*/g));
+        const normalized = splitPorts
+          .map((port) => port.replace(/\s+/g, ' ').trim())
+          .filter(Boolean)
+          .filter((port) => {
+            const upper = port.toUpperCase();
+            if (!upper) return false;
+            if (upper === 'OUT' || upper === 'PASS-THROUGH') return false;
+            if (upper.includes('OUT') && !upper.includes('IN')) return false;
+            if (upper.includes('ODU') || upper.includes('IDU')) return false;
+            return true;
+          });
+        const unique = [...new Set(normalized)];
+        return unique.length ? unique : [pickPhysicalObsEquivalent(template)];
+      }
+
+      function emulationLabelForPort(physicalPort) {
+        const v = String(physicalPort || '').toUpperCase();
+        if (v.includes('SDI')) return 'emulacja SDI przez SRT';
+        if (v.includes('ASI')) return 'emulacja ASI przez SRT';
+        if (v.includes('HDMI')) return 'emulacja HDMI przez SRT';
+        if (v.includes('ST 2110')) return 'emulacja ST 2110 przez SRT';
+        if (v.includes('RF')) return 'emulacja RF-input przez SRT';
+        if (v.includes('IP') || v.includes('RJ45') || v.includes('ETHERNET') || v.includes('LAN') || v.includes('WAN')) return 'emulacja wejścia IP przez SRT';
+        if (v.includes('USB')) return 'emulacja wejścia USB przez SRT';
+        if (v.includes('E1')) return 'emulacja wejścia E1 przez SRT';
+        return 'emulacja wejścia fizycznego przez SRT';
+      }
+
+      function hashSeed(input) {
+        let hash = 0;
+        for (let i = 0; i < input.length; i += 1) hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
+        return Math.abs(hash);
+      }
+
+      function buildObsSrtCallerPreset(profile, template = null, context = {}) {
         const localHost = location.hostname || '127.0.0.1';
         const outputHost = profile.sourceAddress || profile.targetHost || '127.0.0.1';
         const outputPort = profile.sourcePort || profile.targetPort;
+        const physicalEquivalent = context?.physicalPort || pickPhysicalObsEquivalent(template);
+        const connectorIndex = Number(context?.connectorIndex || 0);
+        const templateId = template?.templateId || context?.templateId || 'generic';
+        const attachedId = context?.attachedId || 'preview';
+        const seed = `${profile.id}:${templateId}:${attachedId}:${physicalEquivalent}:${connectorIndex}`;
+        const hash = hashSeed(seed);
+        const streamid = `vmux/${profile.id}/${templateId}/${connectorIndex + 1}-${(hash % 10000).toString().padStart(4, '0')}`;
 
         if (profile.srtListenUrl) {
           try {
             const listen = new URL(profile.srtListenUrl);
             const callerParams = new URLSearchParams(listen.search);
             callerParams.set('mode', 'caller');
+            callerParams.set('streamid', streamid);
+            callerParams.set('peerlatency', '120');
             if (profile.srtPassphrase && !callerParams.has('passphrase')) callerParams.set('passphrase', profile.srtPassphrase);
             if (profile.encryption === 'AES-128' && !callerParams.has('pbkeylen')) callerParams.set('pbkeylen', '16');
             const callerHost = (listen.hostname === '127.0.0.1' || listen.hostname === '0.0.0.0') ? localHost : listen.hostname;
@@ -295,27 +357,52 @@
 
             const bridgeParams = new URLSearchParams(listen.search);
             bridgeParams.set('mode', 'listener');
+            bridgeParams.set('streamid', streamid);
             if (profile.srtPassphrase && !bridgeParams.has('passphrase')) bridgeParams.set('passphrase', profile.srtPassphrase);
             if (profile.encryption === 'AES-128' && !bridgeParams.has('pbkeylen')) bridgeParams.set('pbkeylen', '16');
             const bridgeInput = `srt://0.0.0.0:${listen.port}?${bridgeParams.toString()}`;
             const bridgeCommand = `ffmpeg -fflags nobuffer -i "${bridgeInput}" -c copy -f mpegts "udp://${outputHost}:${outputPort}?pkt_size=1316"`;
-            return { obsUrl, bridgeCommand, available: true };
+            return { obsUrl, bridgeCommand, available: true, reason: 'native-srt', physicalEquivalent, emulationLabel: emulationLabelForPort(physicalEquivalent), streamid, connectorIndex };
           } catch {
             return { available: false };
           }
         }
 
         if (profile.protocol === 'SRT' && profile.targetPort) {
-          const params = new URLSearchParams({ mode: 'caller', latency: '120' });
+          const params = new URLSearchParams({ mode: 'caller', latency: '120', peerlatency: '120', streamid });
           if (profile.srtPassphrase) params.set('passphrase', profile.srtPassphrase);
           if (profile.encryption === 'AES-128') params.set('pbkeylen', '16');
           const obsUrl = `srt://${localHost}:${profile.targetPort}?${params.toString()}`;
-          const listenerUrl = `srt://0.0.0.0:${profile.targetPort}?mode=listener&latency=120`;
+          const listenerUrl = `srt://0.0.0.0:${profile.targetPort}?mode=listener&latency=120&streamid=${encodeURIComponent(streamid)}`;
           const bridgeCommand = `ffmpeg -fflags nobuffer -i "${listenerUrl}" -c copy -f mpegts "udp://${outputHost}:${outputPort}?pkt_size=1316"`;
-          return { obsUrl, bridgeCommand, available: true };
+          return { obsUrl, bridgeCommand, available: true, reason: 'protocol-srt', physicalEquivalent, emulationLabel: emulationLabelForPort(physicalEquivalent), streamid, connectorIndex };
+        }
+
+        if (outputPort) {
+          const basePort = Number(profile.srtBridgePort || (profile.statusPort ? profile.statusPort + 10000 : 19000));
+          const bridgePort = basePort + (hash % 400);
+          const bridgeParams = new URLSearchParams({ mode: 'caller', latency: '120', peerlatency: '120', streamid });
+          if (profile.srtPassphrase) bridgeParams.set('passphrase', profile.srtPassphrase);
+          if (profile.encryption === 'AES-128') bridgeParams.set('pbkeylen', '16');
+
+          const listenerParams = new URLSearchParams({ mode: 'listener', latency: '120', streamid });
+          if (profile.srtPassphrase) listenerParams.set('passphrase', profile.srtPassphrase);
+          if (profile.encryption === 'AES-128') listenerParams.set('pbkeylen', '16');
+
+          const obsUrl = `srt://${localHost}:${bridgePort}?${bridgeParams.toString()}`;
+          const bridgeInput = `srt://0.0.0.0:${bridgePort}?${listenerParams.toString()}`;
+          const bridgeCommand = `ffmpeg -fflags nobuffer -i "${bridgeInput}" -c copy -f mpegts "udp://${outputHost}:${outputPort}?pkt_size=1316"`;
+          return { obsUrl, bridgeCommand, available: true, reason: 'connector-emulation', physicalEquivalent, emulationLabel: emulationLabelForPort(physicalEquivalent), streamid, connectorIndex, bridgePort };
         }
 
         return { available: false };
+      }
+
+      function buildObsSrtCallerPresets(profile, template = null, context = {}) {
+        const inputs = extractEmulatableInputs(template);
+        return inputs
+          .map((physicalPort, connectorIndex) => buildObsSrtCallerPreset(profile, template, { ...context, physicalPort, connectorIndex }))
+          .filter((preset) => preset.available);
       }
 
       function renderCategoryTabs() {
@@ -325,6 +412,10 @@
           button.addEventListener('click', () => {
             state.selectedCategory = button.dataset.category;
             const visible = visibleProfiles();
+            const attached = findAttached(state.selectedAttachedId);
+            if (attached && !visible.some((profile) => profile.id === attached.profileId)) {
+              state.selectedAttachedId = '';
+            }
             if (!visible.some((profile) => profile.id === state.selectedProfileId)) state.selectedProfileId = visible[0]?.id || '';
             renderAll();
           });
@@ -336,6 +427,7 @@
         el.profileBadges.innerHTML = list.map((profile) => `<button class="source-badge ${state.selectedProfileId === profile.id ? 'active' : ''}" data-profile="${profile.id}"><span class="badge-dot ${profile.online ? '' : 'offline'}"></span><span>${profile.label}</span></button>`).join('');
         el.profileBadges.querySelectorAll('[data-profile]').forEach((button) => {
           button.addEventListener('click', () => {
+            state.selectedAttachedId = '';
             state.selectedProfileId = button.dataset.profile;
             renderAll();
           });
@@ -398,18 +490,36 @@
         else commands.push(metric('Szyfrowanie', profile.encryption || 'none', profile.encryption ? 'ustaw tak samo w panelu' : 'profil nieszyfrowany'));
         el.connectorGrid.innerHTML = commands.join('');
 
+        const waitingPresets = buildObsSrtCallerPresets(profile, template, { attachedId: attached?.id || 'active-panel' });
         el.connectedDevices.innerHTML = devices.length
           ? devices.map((device) => `<div class="device-row"><div><strong>${device.address}:${device.port}</strong><span>aktywny nadajnik w labie</span></div><div style="text-align:right;"><strong>${formatNumber(device.packets)} pkt</strong><small>stan: online</small></div></div>`).join('')
-          : '<div class="empty" style="margin-top:0;">Brak podłączonych urządzeń. Podepnij FFmpeg / OBS / bridge SRT do pokazanego ingressu.</div>';
+          : `<div class="empty" style="margin-top:0;">
+              <p style="margin:0 0 8px;">Brak podłączonych urządzeń.</p>
+              ${waitingPresets.length
+                ? waitingPresets.map((preset, index) => `<div class="quick-action" style="margin-top:${index === 0 ? 0 : 10}px;">
+                    <h5>Port SRT ${index + 1}</h5>
+                    <p class="quick-note">Fizyczny odpowiednik: <strong>${escapeHtml(preset.physicalEquivalent || 'wejście')}</strong> → ${escapeHtml(preset.emulationLabel || 'emulacja przez SRT')}</p>
+                    <div class="snippet" style="margin-top:8px;">${escapeHtml(preset.obsUrl)}</div>
+                    <p style="margin:8px 0 0; color:#7f94b1; font-size:12px;">streamid: ${escapeHtml(preset.streamid || 'n/a')}</p>
+                  </div>`).join('')
+                : '<p style="margin:0; color:#9db1cd;">Brak gotowego URL dla tego profilu. Użyj ingressu/bridge z sekcji „Złącza testowe”.</p>'}
+            </div>`;
       }
 
       function renderModalOptions() {
-        const categories = [...new Set(profiles().map((profile) => profile.type))];
-        const safeSelected = categories.includes(state.selectedCategory) ? state.selectedCategory : categories[0];
-        el.categorySelect.innerHTML = categories.map((type) => `<option value="${type}" ${type === safeSelected ? 'selected' : ''}>${CATEGORY_LABELS[type] || type}</option>`).join('');
-        const selectedType = el.categorySelect.value || categories[0] || '';
+        const categories = ['all', ...new Set(profiles().map((profile) => profile.type))];
+        const currentFilter = categories.includes(el.categorySelect.value) ? el.categorySelect.value : 'all';
+        el.categorySelect.innerHTML = categories.map((type) => `<option value="${type}" ${type === currentFilter ? 'selected' : ''}>${CATEGORY_LABELS[type] || type}</option>`).join('');
+
+        const selectedType = el.categorySelect.value || 'all';
         const items = templatesByCategory(selectedType);
-        el.deviceSelect.innerHTML = items.map((template) => `<option value="${template.profileId}::${template.templateId}">${template.name} · ${template.vendor}</option>`).join('');
+        el.deviceSelect.innerHTML = items.map((template) => `<option value="${template.profileId}::${template.templateId}">[${CATEGORY_LABELS[template.profileType] || template.profileType}] ${template.name} · ${template.vendor}</option>`).join('');
+
+        if (!items.length) {
+          el.modalPreview.innerHTML = '<p class="quick-note">Brak urządzeń dla wybranego filtra. Zmień filtr na „Wszystkie”.</p>';
+          return;
+        }
+
         renderModalPreview();
       }
 
@@ -428,7 +538,7 @@
           return;
         }
 
-        const preset = buildObsSrtCallerPreset(profile);
+        const presets = buildObsSrtCallerPresets(profile, template, { attachedId: `${profileId}:${templateId}:modal` });
         el.modalPreview.innerHTML = `
           <div class="preview-title">
             <strong>${escapeHtml(template.name)}</strong>
@@ -441,17 +551,21 @@
             <div class="port-list" style="margin-top:8px;">${(template.virtualPorts || []).map((port) => `<span class="port-pill">${escapeHtml(port)}</span>`).join('')}</div>
           </div>
           <div class="quick-action">
-            <h5>Szybki preset</h5>
-            ${preset.available
-              ? `
-                <div class="quick-action-row">
-                  <button class="primary-btn" type="button" style="padding:8px 12px; border-radius:10px;" data-copy-value="${encodeURIComponent(preset.obsUrl)}">OBS SRT caller</button>
-                  <button class="mini-btn" type="button" data-copy-value="${encodeURIComponent(preset.bridgeCommand)}">Kopiuj bridge FFmpeg</button>
+            <h5>Presety SRT dla wejść urządzenia</h5>
+            ${presets.length
+              ? presets.map((preset, index) => `
+                <div style="${index > 0 ? 'margin-top:14px; padding-top:14px; border-top:1px solid rgba(148,163,184,0.12);' : ''}">
+                  <p class="quick-note">Port SRT ${index + 1} · <strong>${escapeHtml(preset.physicalEquivalent || 'wejście urządzenia')}</strong> → ${escapeHtml(preset.emulationLabel || 'emulacja przez SRT')}</p>
+                  <div class="quick-action-row">
+                    <button class="primary-btn" type="button" style="padding:8px 12px; border-radius:10px;" data-copy-value="${encodeURIComponent(preset.obsUrl)}">OBS SRT caller</button>
+                    <button class="mini-btn" type="button" data-copy-value="${encodeURIComponent(preset.bridgeCommand)}">Kopiuj bridge FFmpeg</button>
+                  </div>
+                  <div class="snippet">${escapeHtml(preset.obsUrl)}</div>
+                  <div class="snippet">${escapeHtml(preset.bridgeCommand)}</div>
+                  <p style="margin:8px 0 0; color:#7f94b1; font-size:12px;">streamid: ${escapeHtml(preset.streamid || 'n/a')}</p>
                 </div>
-                <div class="snippet">${escapeHtml(preset.obsUrl)}</div>
-                <div class="snippet">${escapeHtml(preset.bridgeCommand)}</div>
-              `
-              : '<p class="quick-note">Dla tego profilu brak bezpośredniego presetu OBS SRT caller. Użyj trybu OBS RTMP/SRT zgodnie z profilem.</p>'}
+              `).join('')
+              : '<p class="quick-note">Brak automatycznego presetu SRT dla tego urządzenia. Dodaj ręczny bridge FFmpeg do egressu profilu.</p>'}
           </div>
         `;
 
@@ -471,7 +585,7 @@
         });
       }
 
-      function openModal() { renderModalOptions(); el.modalBackdrop.classList.add('open'); }
+      function openModal() { el.categorySelect.value = 'all'; renderModalOptions(); el.modalBackdrop.classList.add('open'); }
       function closeModal() { el.modalBackdrop.classList.remove('open'); }
       function attachSelectedDevice() {
         const raw = el.deviceSelect.value;
@@ -485,8 +599,6 @@
           templateId,
         };
         state.attachedDevices.push(instance);
-        state.selectedAttachedId = instance.id;
-        state.selectedProfileId = profileId;
         persistAttached();
         closeModal();
         renderAll();

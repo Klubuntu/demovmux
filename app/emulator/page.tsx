@@ -4,7 +4,7 @@ import Hls from 'hls.js';
 import {
   HelpCircle, X, Power, Volume2, VolumeX, Info, Home,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
-  Wifi, Satellite, Radio, Signal, Cpu, Database, Maximize2, Minimize2,
+  Wifi, Satellite, Radio, Signal, Cpu, Database, Maximize2, Minimize2, AlertTriangle,
 } from 'lucide-react';
 
 // ─────────────────────────── types ───────────────────────────
@@ -61,7 +61,7 @@ const MENU_ITEMS = [
   'Tryb odbioru', 'Informacje o systemie',
 ];
 
-const PREVIEW_STREAM_TYPES = new Set(['hls', 'rtmp', 'srt']);
+const PREVIEW_STREAM_TYPES = new Set(['hls', 'rtmp', 'srt', 'dash', 'mld']);
 
 // ─────────────────────────── component ───────────────────────────
 export default function EmulatorPage() {
@@ -92,6 +92,9 @@ export default function EmulatorPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  const [radioLoading, setRadioLoading] = useState(false);
+  const [radioError, setRadioError] = useState<string | null>(null);
+  const [reachability, setReachability] = useState<Record<number, boolean>>({});
 
   const [osd, setOsd]       = useState<{ msg: string; vol: boolean } | null>(null);
   const [numBuf, setNumBuf] = useState('');
@@ -99,6 +102,7 @@ export default function EmulatorPage() {
   const numTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewRef = useRef<HTMLVideoElement | null>(null);
+  const radioRef = useRef<HTMLAudioElement | null>(null);
   const previewViewportRef = useRef<HTMLDivElement | null>(null);
   const lastSelectedChannelKey = useRef<string>('');
 
@@ -251,7 +255,7 @@ export default function EmulatorPage() {
                 className={`${i === channelListIdx ? 'bg-indigo-700' : 'bg-gray-900'} cursor-pointer hover:bg-indigo-800/70 focus:outline-none focus:ring-2 focus:ring-indigo-400/70`}
               >
                 <td className="px-4 py-2 font-mono">{c.lcn}</td>
-                <td className="px-4 py-2">{c.name}</td>
+                <td className="px-4 py-2">{c.name}{c.stream_url && reachability[c.id] === false && <span title="Kanał tymczasowo niedostępny"><AlertTriangle size={11} className="inline ml-1 text-yellow-500"/></span>}</td>
                 <td className="px-4 py-2">{multiplexes.find(m => m.id === c.mux_id)?.frequency_mhz ?? '-'}</td>
                 <td className="px-4 py-2">{c.mux_name}</td>
               </tr>
@@ -266,6 +270,24 @@ export default function EmulatorPage() {
     setOsd({ msg, vol });
     if (osdTimer.current) clearTimeout(osdTimer.current);
     osdTimer.current = setTimeout(() => setOsd(null), 2500);
+  }, []);
+
+  const probeReachable = useCallback(async (channel?: Channel | null) => {
+    if (!channel?.stream_url) return false;
+    const streamType = (channel.stream_type ?? '').toLowerCase();
+    if (!['hls', 'dash', 'mld', 'icecast'].includes(streamType)) return false;
+    if (!/^https?:\/\//i.test(channel.stream_url)) return false;
+    try {
+      await fetch(channel.stream_url, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(4500),
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
   const isPreviewEligible = useCallback((channel?: Channel | null) => {
@@ -393,6 +415,10 @@ export default function EmulatorPage() {
     flashOsd(`Ładowanie podglądu: ${currentChannel.name}`);
   }, [channels, chIdx, powered, previewActive, previewLoading, isPreviewEligible, flashOsd]);
 
+  const notifyReceptionLocked = useCallback(() => {
+    flashOsd('Tryb odbioru nie zmienia się z pilota. Użyj menu MUX (PPM).');
+  }, [flashOsd]);
+
   const jumpToMux = useCallback((muxId: number, recType: ReceptionType) => {
     const mux = multiplexes.find(m => m.id === muxId);
     setCtxMenu(null);
@@ -444,6 +470,68 @@ export default function EmulatorPage() {
   const sig = 72 + ((chIdx * 7 + 13) % 22);
   const previewEligible = isPreviewEligible(ch);
   const selectedChannelKey = ch ? `${ch.id}|${ch.stream_type ?? ''}|${ch.stream_url ?? ''}|${ch.channel_type ?? ''}` : 'none';
+  const currentReachable = ch ? Boolean(reachability[ch.id]) : false;
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const rows = await Promise.all(channels.map(async (c) => [c.id, await probeReachable(c)] as const));
+      if (cancelled) return;
+      setReachability(Object.fromEntries(rows));
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [channels, probeReachable]);
+
+  useEffect(() => {
+    const audio = radioRef.current;
+    if (!audio) return;
+    if (!powered || !ch || ch.channel_type !== 'radio' || switching) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      setRadioLoading(false);
+      setRadioError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const openRadio = async () => {
+      setRadioLoading(true);
+      setRadioError(null);
+      const ok = await probeReachable(ch);
+      if (cancelled) return;
+      setReachability(prev => ({ ...prev, [ch.id]: ok }));
+      if (!ok || !ch.stream_url) {
+        setRadioLoading(false);
+        setRadioError('Kanał tymczasowo niedostępny');
+        return;
+      }
+      audio.src = ch.stream_url;
+      audio.muted = muted;
+      audio.volume = muted ? 0 : volume / 100;
+      try {
+        await audio.play();
+        if (!cancelled) {
+          setRadioLoading(false);
+          setRadioError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setRadioLoading(false);
+          setRadioError('Nie udało się uruchomić stacji radiowej');
+        }
+      }
+    };
+    void openRadio();
+
+    return () => {
+      cancelled = true;
+      audio.pause();
+    };
+  }, [powered, ch?.id, ch?.channel_type, ch?.stream_url, switching, muted, volume, probeReachable]);
 
   const openChannelList = useCallback(() => {
     if (!powered) return;
@@ -664,6 +752,7 @@ export default function EmulatorPage() {
   return (
     <div className="bg-gray-950 rounded-2xl overflow-hidden border border-gray-800 shadow-2xl min-h-[calc(100vh-7rem)]">
       {showChannelList && ChannelListOverlay}
+      <audio ref={radioRef} className="hidden" playsInline />
 
       {/* top bar */}
       <div
@@ -681,10 +770,10 @@ export default function EmulatorPage() {
             vMUX Emulator
           </span>
           <button
-            onClick={cycleReception}
-            onContextMenu={e => { e.stopPropagation(); }}
+            onClick={notifyReceptionLocked}
+            onContextMenu={e => { e.stopPropagation(); e.preventDefault(); openCtxMenu(e.clientX, e.clientY); }}
             className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border border-current/30 transition-all hover:opacity-80 active:scale-95 shrink-0 ${rec.bg} ${rec.color}`}
-            title="LPM: zmień typ odbioru (T)"
+            title="LPM: info | PPM: lista MUX-ów"
           >
             <rec.Icon size={11}/>{rec.label}
           </button>
@@ -817,15 +906,29 @@ export default function EmulatorPage() {
                     {/* channel content */}
                     <div className="absolute inset-0 flex items-center justify-center">
                       {ch.channel_type==='radio' ? (
-                        <div className="text-center">
+                        <div className="text-center px-6">
                           <div className="text-5xl mb-3 animate-pulse">📻</div>
                           <p className="text-gray-200 text-xl font-bold">{ch.name}</p>
-                          <div className="flex justify-center items-end gap-0.5 mt-5">
-                            {Array.from({length:24}).map((_,i)=>(
-                              <div key={i} className="w-1 rounded-sm bg-blue-500 animate-pulse"
-                                style={{height:`${8+Math.abs(Math.sin(i*0.6)*18)}px`,animationDelay:`${i*45}ms`,opacity:0.6+Math.sin(i)*0.4}}/>
-                            ))}
-                          </div>
+                          {radioLoading && (
+                            <div className="flex gap-1.5 justify-center mt-4">
+                              {[0,1,2].map(i=>(
+                                <div key={i} className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay:`${i*120}ms`}}/>
+                              ))}
+                            </div>
+                          )}
+                          {radioError && (
+                            <div className="mt-4 flex items-center justify-center gap-1.5 text-red-400 text-sm">
+                              <AlertTriangle size={14}/>{radioError}
+                            </div>
+                          )}
+                          {!radioLoading && !radioError && (
+                            <div className="flex justify-center items-end gap-0.5 mt-5">
+                              {Array.from({length:24}).map((_,i)=>(
+                                <div key={i} className="w-1 rounded-sm bg-blue-500 animate-pulse"
+                                  style={{height:`${8+Math.abs(Math.sin(i*0.6)*18)}px`,animationDelay:`${i*45}ms`,opacity:0.6+Math.sin(i)*0.4}}/>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ) : previewActive && ch.stream_url ? (
                         <>
@@ -902,9 +1005,6 @@ export default function EmulatorPage() {
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1.5">
-                        <div className="bg-black/75 backdrop-blur-sm rounded-lg px-2.5 py-1 text-xs text-gray-200 font-mono tabular-nums">
-                          {new Date().toLocaleTimeString('pl',{hour:'2-digit',minute:'2-digit'})}
-                        </div>
                         <div className="bg-black/75 backdrop-blur-sm rounded-lg px-2.5 py-1 flex items-center gap-1.5">
                           <div className="flex items-end gap-0.5">
                             {[3,5,7,9].map((h,i)=>(
@@ -913,6 +1013,11 @@ export default function EmulatorPage() {
                           </div>
                           <span className={`text-[10px] font-semibold ${rec.color}`}>{sig}%</span>
                         </div>
+                        {ch.stream_url && !currentReachable && (
+                          <div className="bg-black/80 backdrop-blur-sm rounded-lg px-2 py-1 flex items-center gap-1 text-yellow-400 text-[10px] font-semibold">
+                            <AlertTriangle size={10}/> Niedostępny
+                          </div>
+                        )}
                       </div>
                     </div>
 

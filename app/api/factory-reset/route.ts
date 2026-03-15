@@ -1,4 +1,4 @@
-import { dbRun, seedDemoData } from '@/lib/db';
+import { createDb, dbRun, hasLocalDemoSnapshot, restoreDemoData, seedDemoData } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 const RESET_PASSWORD = process.env.FACTORY_RESET_PASSWORD ?? 'dmv$2026';
@@ -9,6 +9,12 @@ export async function POST(req: Request) {
 
     if (password !== RESET_PASSWORD) {
       return NextResponse.json({ ok: false, error: 'Nieprawidłowe hasło.' }, { status: 403 });
+    }
+
+    const client = createDb();
+    if (client.kind === 'sqlite' && hasLocalDemoSnapshot()) {
+      await restoreDemoData();
+      return NextResponse.json({ ok: true, restoredFromSnapshot: true });
     }
 
     // Wipe all data tables in dependency order

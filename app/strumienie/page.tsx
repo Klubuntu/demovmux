@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, Wifi, WifiOff, AlertCircle, Clock, Globe, Satellite, Radio, Waves } from 'lucide-react';
+import { Plus, Pencil, Trash2, Wifi, WifiOff, AlertCircle, Clock, Globe, Satellite, Radio, Waves, Cpu, HardDrive, Activity } from 'lucide-react';
 import StatusBadge from '@/components/StatusBadge';
 import Modal from '@/components/Modal';
 import FieldHint from '@/components/FieldHint';
@@ -9,6 +9,8 @@ interface Stream {
   id: number; name: string; broadcaster: string; type: string; protocol: string;
   source_address: string; source_port: number; bitrate_mbps: number;
   redundancy_mode: string; encryption: string; status: string; last_seen_at: string;
+  mode: 'physical' | 'virtual';
+  emulator_profile_id: string | null;
 }
 
 interface EmulatorDevice {
@@ -60,7 +62,8 @@ const typeBg: Record<string, string> = {
 
 const defaultStream: Partial<Stream> = {
   name: '', broadcaster: '', type: 'fiber', protocol: 'ASI', source_address: '',
-  source_port: 5004, bitrate_mbps: 50, redundancy_mode: 'primary', encryption: 'none', status: 'active',
+  source_port: 5004, bitrate_mbps: 50, redundancy_mode: 'primary', encryption: 'none',
+  status: 'active', mode: 'physical', emulator_profile_id: null,
 };
 
 export default function StrumieniaPage() {
@@ -131,6 +134,8 @@ export default function StrumieniaPage() {
       bitrate_mbps: Number(selectedLab.status?.receivedPackets ? Math.max(3, Math.round((selectedLab.status.receivedPackets / 5000))) : p.bitrate_mbps ?? 50),
       encryption: selectedLab.encryption ?? 'none',
       status: 'active',
+      mode: 'virtual',
+      emulator_profile_id: selectedLab.id,
     }));
   };
 
@@ -157,8 +162,10 @@ export default function StrumieniaPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {streams.map(s => {
           const Icon = typeIcons[s.type] ?? Wifi;
+          const isVirtual = s.mode === 'virtual';
+          const linkedProfile = isVirtual ? labProfiles.find(p => p.id === s.emulator_profile_id) : null;
           return (
-            <div key={s.id} className="bg-white rounded-xl border border-gray-200 p-4">
+            <div key={s.id} className={`bg-white rounded-xl border p-4 ${isVirtual ? 'border-indigo-200' : 'border-gray-200'}`}>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${typeBg[s.type] ?? 'bg-gray-50 text-gray-500'}`}>
@@ -170,6 +177,15 @@ export default function StrumieniaPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  {isVirtual ? (
+                    <span className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                      <Cpu size={9} />Wirtualny
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                      <HardDrive size={9} />Fizyczny
+                    </span>
+                  )}
                   <button onClick={() => openEdit(s)} className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg"><Pencil size={13} /></button>
                   <button onClick={() => del(s.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={13} /></button>
                 </div>
@@ -196,6 +212,20 @@ export default function StrumieniaPage() {
                   <span className="text-gray-400">Tryb:</span>
                   <span className="text-gray-600 capitalize">{s.redundancy_mode}</span>
                 </div>
+                {isVirtual && linkedProfile && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Emulator:</span>
+                    <span className={`flex items-center gap-1 font-medium ${linkedProfile.online ? 'text-green-600' : 'text-red-500'}`}>
+                      <Activity size={10} />{linkedProfile.label}
+                    </span>
+                  </div>
+                )}
+                {isVirtual && !linkedProfile && s.emulator_profile_id && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Emulator:</span>
+                    <span className="font-mono text-xs text-gray-500">{s.emulator_profile_id} (offline)</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
@@ -255,6 +285,7 @@ export default function StrumieniaPage() {
 
         <div className="grid grid-cols-2 gap-4">
           {([
+            ['mode', 'Tryb źródła', 'select', ['physical', 'virtual'], 'physical = fizyczny sprzęt (koder, modulator, odbiornik ASI/SDI/SAT/DVB); virtual = wirtualny emulator sygnału (software lab).'],
             ['name', 'Nazwa', 'text'],
             ['broadcaster', 'Nadawca', 'text'],
             ['type', 'Typ łącza', 'select', ['fiber', 'satellite', 'microwave', 'ip_srt', 'ip_rist', 'backhaul', 'offair'], 'Fizyczne medium dosyłu: Światłowód = ASI/IP po kablach, Satelita = DVB-S2, Radiolinia = mikrofale, IP/SRT = internet z szyfrowaniem, Backhaul = łącze agregacyjne.'],
@@ -273,7 +304,7 @@ export default function StrumieniaPage() {
               {type === 'select' ? (
                 <select value={String(editing[key] ?? '')} onChange={e => f(key, e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  {opts?.map(o => <option key={o} value={o}>{typeLabels[o] ?? o}</option>)}
+                  {opts?.map(o => <option key={o} value={o}>{key === 'mode' ? (o === 'physical' ? '🔧 Fizyczny (sprzęt)' : '💻 Wirtualny (emulator)') : (typeLabels[o] ?? o)}</option>)}
                 </select>
               ) : (
                 <input type={type} value={String(editing[key] ?? '')} onChange={e => f(key, type === 'number' ? Number(e.target.value) : e.target.value)}
@@ -281,6 +312,53 @@ export default function StrumieniaPage() {
               )}
             </div>
           ))}
+
+          {/* Emulator profile link – shown only for virtual mode */}
+          {editing.mode === 'virtual' && (
+            <div className="col-span-2">
+              <label className="flex items-center gap-1 text-xs font-medium text-gray-700 mb-1">
+                <Cpu size={12} className="text-indigo-500" />
+                Profil emulatora
+                <FieldHint text="ID profilu emulatora z tools/input-emulators (np. backhaul, satellite, offair). Uzupełniane automatycznie przez Import z Lab." />
+              </label>
+              {labRunning && labProfiles.length > 0 ? (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {labProfiles.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setEditing(prev => ({ ...prev, emulator_profile_id: p.id, type: p.type, protocol: p.protocol, source_address: p.sourceAddress, source_port: p.sourcePort, encryption: p.encryption ?? 'none' }))}
+                      className={`px-2.5 py-1.5 rounded-full text-xs font-semibold border transition-colors flex items-center gap-1.5 ${editing.emulator_profile_id === p.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${p.online ? 'bg-green-400' : 'bg-red-400'}`} />
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <input
+                type="text"
+                value={String(editing.emulator_profile_id ?? '')}
+                onChange={e => setEditing(p => ({ ...p, emulator_profile_id: e.target.value || null }))}
+                placeholder="np. backhaul, satellite, offair…"
+                className="w-full border border-indigo-200 bg-indigo-50 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+              {editing.emulator_profile_id && labProfiles.some(p => p.id === editing.emulator_profile_id) && (
+                <p className={`mt-1 text-xs flex items-center gap-1 ${labProfiles.find(p => p.id === editing.emulator_profile_id)?.online ? 'text-green-600' : 'text-red-500'}`}>
+                  <Activity size={10} />
+                  Emulator {labProfiles.find(p => p.id === editing.emulator_profile_id)?.online ? 'online ✓' : 'offline – uruchom tools/input-emulators'}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Physical hardware hint */}
+          {editing.mode === 'physical' && (
+            <div className="col-span-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+              <p className="font-semibold text-gray-700 mb-1 flex items-center gap-1.5"><HardDrive size={12} />Fizyczne urządzenie wejściowe</p>
+              <p>Skonfiguruj adres źródłowy i port tak, aby odpowiadały konfiguracji fizycznego urządzenia (koder, modulator, odbiornik satelitarny, karta ASI). Dla sygnałów ASI/SDI podłączonych bezpośrednio zostaw port = 0.</p>
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-gray-100">
           <button onClick={() => setModal(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg">Anuluj</button>

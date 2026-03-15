@@ -32,6 +32,14 @@ interface InputStream {
   status?: string;
 }
 
+interface LabProfile {
+  id: string;
+  label: string;
+  protocol?: string;
+  sourceAddress?: string;
+  sourcePort?: number;
+}
+
 const defaultCh: Partial<Channel> = {
   name: '', short_name: '', lcn: 0, service_id: 0, pmt_pid: 4096, video_pid: 4097,
   audio_pid: 4098, pcr_pid: 4097, video_format: 'HD 1080i', video_bitrate_mbps: 5,
@@ -49,6 +57,7 @@ const STREAM_TYPE_COLORS: Record<string, string> = {
   udp:     'bg-gray-100 text-gray-700',
   rist:    'bg-pink-100 text-pink-700',
   icecast: 'bg-teal-100 text-teal-700',
+  mld:     'bg-emerald-100 text-emerald-700',
 };
 
 export default function KanalyPage() {
@@ -59,6 +68,8 @@ export default function KanalyPage() {
   const [editing, setEditing] = useState<Partial<Channel>>(defaultCh);
   const [isEdit, setIsEdit] = useState(false);
   const [filterMux, setFilterMux] = useState('');
+  const [labProfiles, setLabProfiles] = useState<LabProfile[]>([]);
+  const [labOnline, setLabOnline] = useState(false);
 
   const load = useCallback(() => {
     const q = filterMux ? `?mux_id=${filterMux}` : '';
@@ -68,11 +79,47 @@ export default function KanalyPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { fetch('/api/multiplexes').then(r => r.json()).then(setMuxes); }, []);
   useEffect(() => { fetch('/api/streams').then(r => r.json()).then(setStreams); }, []);
+  useEffect(() => {
+    if (!modal) return;
+    fetch('/api/input-emulators', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((d) => {
+        if (!d?.running) {
+          setLabOnline(false);
+          setLabProfiles([]);
+          return;
+        }
+        setLabOnline(true);
+        setLabProfiles((d.profiles ?? []).filter((p: { online?: boolean }) => p?.online));
+      })
+      .catch(() => {
+        setLabOnline(false);
+        setLabProfiles([]);
+      });
+  }, [modal]);
 
   const selectedMux = muxes.find(m => m.id === (editing.mux_id ?? muxes[0]?.id));
   const selectedStream = streams.find(s => s.id === Number(editing.input_stream_id));
   const isIptv = selectedMux?.mux_type === 'iptv';
   const isRadio = editing.channel_type === 'radio' || selectedMux?.radio_enabled === 1;
+
+  const applyLabTemplate = (profileId: string) => {
+    const profile = labProfiles.find(p => p.id === profileId);
+    if (!profile) return;
+    const protocol = String(profile.protocol ?? '').toLowerCase();
+    if (protocol.includes('srt')) {
+      f('stream_type', 'srt');
+      f('stream_url', `srt://${profile.sourceAddress ?? '127.0.0.1'}:${profile.sourcePort ?? 0}?mode=caller&latency=120`);
+      return;
+    }
+    if (protocol.includes('multicast')) {
+      f('stream_type', 'udp');
+      f('stream_url', `udp://@${profile.sourceAddress ?? '239.0.0.1'}:${profile.sourcePort ?? 1234}`);
+      return;
+    }
+    f('stream_type', 'hls');
+    f('stream_url', `http://${profile.sourceAddress ?? '127.0.0.1'}:${profile.sourcePort ?? 8080}/live.m3u8`);
+  };
 
   const openCreate = () => {
     const defaultMuxId = filterMux ? Number(filterMux) : (muxes[0]?.id ?? 0);
@@ -315,12 +362,29 @@ export default function KanalyPage() {
               </div>
 
               {/* IPTV section */}
-              <div className={`col-span-2 border-t border-gray-100 pt-4 mt-2 ${isIptv ? '' : 'opacity-50'}`}>
+              {isIptv && (
+              <div className="col-span-2 border-t border-gray-100 pt-4 mt-2">
                 <div className="flex items-center gap-2 mb-3">
                   <Wifi size={14} className="text-indigo-500" />
                   <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Ustawienia IPTV / Strumień</span>
-                  {!isIptv && <span className="text-xs text-gray-400">(dostępne tylko dla multipleksów IPTV)</span>}
                 </div>
+                {labOnline && (
+                  <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-xs text-indigo-900">
+                    <p className="font-semibold">Template (Lab Online)</p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <select
+                        defaultValue=""
+                        onChange={e => e.target.value && applyLabTemplate(e.target.value)}
+                        className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-xs bg-white"
+                      >
+                        <option value="">Wybierz template z aktywnego LAB</option>
+                        {labProfiles.map(p => (
+                          <option key={p.id} value={p.id}>{p.label} ({p.protocol})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
                 <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-xs text-indigo-900">
                   <p className="font-semibold">Szybki test lokalnego IPTV</p>
                   <p className="mt-1 text-indigo-800">
@@ -344,12 +408,12 @@ export default function KanalyPage() {
                       Protokół strumienia <FieldHint text="Wybierz protokół odpowiadający URL strumienia. Wpływa na ikonę w tabeli i sposób przetwarzania przez odtwarzacz." />
                     </label>
                     <select value={editing.stream_type ?? 'hls'} onChange={e => f('stream_type', e.target.value)}
-                      disabled={!isIptv}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50">
                       <option value="hls">HLS</option>
                       <option value="rtmp">RTMP</option>
                       <option value="srt">SRT</option>
                       <option value="dash">DASH</option>
+                      <option value="mld">MLD</option>
                       <option value="udp">UDP</option>
                       <option value="rist">RIST</option>
                       <option value="icecast">Icecast / Shoutcast</option>
@@ -361,7 +425,6 @@ export default function KanalyPage() {
                     </label>
                     <input type="text" value={editing.epg_channel_id ?? ''} onChange={e => f('epg_channel_id', e.target.value)}
                       placeholder="np. tvp1.pl"
-                      disabled={!isIptv}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50" />
                   </div>
                   <div className="col-span-2">
@@ -370,18 +433,18 @@ export default function KanalyPage() {
                     </label>
                     <input type="text" value={editing.epg_source_url ?? ''} onChange={e => f('epg_source_url', e.target.value)}
                       placeholder="https://epg.example.com/xmltv.xml"
-                      disabled={!isIptv}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50" />
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Radio section */}
-              <div className={`col-span-2 border-t border-gray-100 pt-4 mt-2 ${isRadio ? '' : 'opacity-50'}`}>
+              {isRadio && (
+              <div className="col-span-2 border-t border-gray-100 pt-4 mt-2">
                 <div className="flex items-center gap-2 mb-3">
                   <Music size={14} className="text-teal-500" />
                   <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Ustawienia kanału radiowego</span>
-                  {!isRadio && <span className="text-xs text-gray-400">(dostępne gdy typ = Radio)</span>}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -397,7 +460,6 @@ export default function KanalyPage() {
                       Kodek audio <FieldHint text="Kodek kompresji audio. MP2 = tradycyjny dla DVB (wymagany przez niektóre odbiorniki). AAC/HE-AAC = nowoczesne, wydajniejsze kodeki stosowane w DVB-T2." />
                     </label>
                     <select value={editing.audio_codec ?? 'AAC'} onChange={e => f('audio_codec', e.target.value)}
-                      disabled={!isRadio}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50">
                       <option value="MP2">MPEG-1 Layer II (MP2)</option>
                       <option value="MP3">MPEG-1 Layer III (MP3)</option>
@@ -412,7 +474,6 @@ export default function KanalyPage() {
                       Częstotliwość próbkowania (Hz) <FieldHint text="Liczba próbek audio na sekundę. 48 000 Hz = standard broadcast (zalecane). 44 100 Hz = standard CD." />
                     </label>
                     <select value={String(editing.sample_rate_hz ?? 48000)} onChange={e => f('sample_rate_hz', Number(e.target.value))}
-                      disabled={!isRadio}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50">
                       <option value="44100">44 100 Hz (CD)</option>
                       <option value="48000">48 000 Hz (broadcast)</option>
@@ -424,7 +485,6 @@ export default function KanalyPage() {
                       Tryb stereo <FieldHint text="Sposób kodowania kanałów stereo. Joint Stereo = wydajniejszy od stereo. Dual Mono = dwa niezależne kanały mono (np. różne języki). Mono = jeden kanał." />
                     </label>
                     <select value={editing.stereo_mode ?? 'stereo'} onChange={e => f('stereo_mode', e.target.value)}
-                      disabled={!isRadio}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-gray-50">
                       <option value="stereo">Stereo</option>
                       <option value="joint_stereo">Joint Stereo</option>
@@ -434,6 +494,7 @@ export default function KanalyPage() {
                   </div>
                 </div>
               </div>
+              )}
             </div>
             <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-gray-100">
               <button onClick={() => setModal(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Anuluj</button>

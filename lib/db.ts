@@ -9,6 +9,7 @@ type RunResult = Database_.RunResult;
 
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'vmux.db');
+const DEMO_SNAPSHOT_PATH = path.join(DB_DIR, 'vmux.demo.snapshot.db');
 
 let _db: SqliteDatabase | null = null;
 let _pool: Pool | null = null;
@@ -37,12 +38,40 @@ function getDatabaseUrl(): string {
   return `file:${DB_PATH}`;
 }
 
+function removeSqliteSidecars(filePath: string) {
+  for (const suffix of ['-wal', '-shm']) {
+    const sidecar = `${filePath}${suffix}`;
+    if (fs.existsSync(sidecar)) fs.rmSync(sidecar, { force: true });
+  }
+}
+
+function hydrateSqliteFromSnapshotIfNeeded(filePath: string) {
+  if (filePath !== DB_PATH) return;
+  if (fs.existsSync(filePath)) return;
+  if (!fs.existsSync(DEMO_SNAPSHOT_PATH)) return;
+  fs.copyFileSync(DEMO_SNAPSHOT_PATH, filePath);
+  removeSqliteSidecars(filePath);
+}
+
+function resetSqliteClientCache() {
+  if (_db) {
+    try {
+      _db.close();
+    } catch {
+      // noop
+    }
+  }
+  _db = null;
+  if (_client?.kind === 'sqlite') _client = null;
+}
+
 function createSqliteDbFromUrl(url: string): SqliteDatabase {
   if (_db) return _db;
 
   const filePath = url.replace(/^file:/, '');
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  hydrateSqliteFromSnapshotIfNeeded(filePath);
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const BetterSqlite3 = require('better-sqlite3') as typeof import('better-sqlite3');
@@ -140,6 +169,8 @@ async function initSchemaPostgres(pool: Pool): Promise<void> {
       redundancy_mode TEXT DEFAULT 'none' CHECK (redundancy_mode IN ('none','backup','primary')),
       redundancy_partner_id INTEGER REFERENCES input_streams(id),
       encryption TEXT DEFAULT 'none',
+      mode TEXT NOT NULL DEFAULT 'physical' CHECK (mode IN ('physical','virtual')),
+      emulator_profile_id TEXT,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','error','standby')),
       last_seen_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -291,6 +322,9 @@ async function runMigrationsPostgres(pool: Pool): Promise<void> {
   await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS audio_codec TEXT DEFAULT 'AAC'`);
   await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS sample_rate_hz INTEGER DEFAULT 48000`);
   await safe(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS stereo_mode TEXT DEFAULT 'stereo'`);
+  // input_streams: physical vs virtual mode
+  await safe(`ALTER TABLE input_streams ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'physical'`);
+  await safe(`ALTER TABLE input_streams ADD COLUMN IF NOT EXISTS emulator_profile_id TEXT`);
 }
 
 /** Returns true if the multiplexes table is empty (DB needs seeding). */
@@ -298,6 +332,22 @@ export async function isDbEmpty(): Promise<boolean> {
   await ensurePgSchema();
   const row = await dbGet<{ c: number | string }>('SELECT COUNT(*) as c FROM multiplexes');
   return Number(row?.c ?? 0) === 0;
+}
+
+export function hasLocalDemoSnapshot(): boolean {
+  return fs.existsSync(DEMO_SNAPSHOT_PATH);
+}
+
+export async function restoreDemoData(): Promise<void> {
+  const client = createDb();
+  if (client.kind === 'sqlite' && hasLocalDemoSnapshot()) {
+    resetSqliteClientCache();
+    removeSqliteSidecars(DB_PATH);
+    if (fs.existsSync(DB_PATH)) fs.rmSync(DB_PATH, { force: true });
+    fs.copyFileSync(DEMO_SNAPSHOT_PATH, DB_PATH);
+    return;
+  }
+  await seedDemoData();
 }
 
 /** Seed all example data into both SQLite and Postgres. */
@@ -495,6 +545,8 @@ function initSchema(db: SqliteDatabase) {
       redundancy_mode TEXT DEFAULT 'none' CHECK (redundancy_mode IN ('none','backup','primary')),
       redundancy_partner_id INTEGER REFERENCES input_streams(id),
       encryption TEXT DEFAULT 'none',
+      mode TEXT NOT NULL DEFAULT 'physical' CHECK (mode IN ('physical','virtual')),
+      emulator_profile_id TEXT,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','error','standby')),
       last_seen_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -607,19 +659,25 @@ function seedData(db: SqliteDatabase) {
 
   // Input streams
   const streams = [
-    { name: 'TVP Fiber Primary', broadcaster: 'TVP S.A.', type: 'fiber', protocol: 'ASI/SDI', source_address: '10.10.1.10', source_port: 5004, bitrate_mbps: 120, redundancy_mode: 'primary', encryption: 'none', status: 'active' },
-    { name: 'TVP Fiber Backup', broadcaster: 'TVP S.A.', type: 'fiber', protocol: 'ASI/SDI', source_address: '10.10.1.11', source_port: 5004, bitrate_mbps: 120, redundancy_mode: 'backup', encryption: 'none', status: 'standby' },
-    { name: 'Polsat IP/SRT', broadcaster: 'Polsat S.A.', type: 'ip_srt', protocol: 'SRT', source_address: '195.117.20.5', source_port: 9000, bitrate_mbps: 50, redundancy_mode: 'primary', encryption: 'AES-128', status: 'active' },
-    { name: 'TVN SDI Fiber', broadcaster: 'TVN S.A.', type: 'fiber', protocol: 'SDI', source_address: '10.10.2.5', source_port: 5004, bitrate_mbps: 80, redundancy_mode: 'primary', encryption: 'none', status: 'active' },
-    { name: 'Eutelsat Downlink', broadcaster: 'Various', type: 'satellite', protocol: 'DVB-S2', source_address: '13.0°E Eutelsat 13B', source_port: null, bitrate_mbps: 40, redundancy_mode: 'backup', encryption: 'PowerVu', status: 'active' },
-    { name: 'Hot Bird Downlink', broadcaster: 'Various', type: 'satellite', protocol: 'DVB-S2', source_address: '13.0°E Hot Bird 13B', source_port: null, bitrate_mbps: 35, redundancy_mode: 'backup', encryption: 'none', status: 'active' },
-    { name: 'Backhaul WAN-WA01', broadcaster: 'Internal', type: 'backhaul', protocol: 'IP Multicast', source_address: '239.10.1.1', source_port: 1234, bitrate_mbps: 200, redundancy_mode: 'primary', encryption: 'none', status: 'active' },
-    { name: 'Mikrofalowa Katowice', broadcaster: 'Internal', type: 'microwave', protocol: 'E1/IP', source_address: '172.16.5.2', source_port: null, bitrate_mbps: 34, redundancy_mode: 'backup', encryption: 'none', status: 'active' },
-    { name: 'Off-Air Retransmisja Kraków', broadcaster: 'Internal', type: 'offair', protocol: 'DVB-T2', source_address: 'RF CH26 514MHz', source_port: null, bitrate_mbps: 36, redundancy_mode: 'none', encryption: 'none', status: 'active' },
-    { name: 'Canal+ SRT', broadcaster: 'Canal+ Polska', type: 'ip_srt', protocol: 'SRT', source_address: '82.145.20.11', source_port: 9010, bitrate_mbps: 30, redundancy_mode: 'primary', encryption: 'AES-256', status: 'active' },
+    // ── Fizyczne strumienie wejściowe (real hardware) ──────────────────────
+    { name: 'TVP Fiber Primary', broadcaster: 'TVP S.A.', type: 'fiber', protocol: 'ASI/SDI', source_address: '10.10.1.10', source_port: 5004, bitrate_mbps: 120, redundancy_mode: 'primary', encryption: 'none', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'TVP Fiber Backup', broadcaster: 'TVP S.A.', type: 'fiber', protocol: 'ASI/SDI', source_address: '10.10.1.11', source_port: 5004, bitrate_mbps: 120, redundancy_mode: 'backup', encryption: 'none', status: 'standby', mode: 'physical', emulator_profile_id: null },
+    { name: 'Polsat IP/SRT', broadcaster: 'Polsat S.A.', type: 'ip_srt', protocol: 'SRT', source_address: '195.117.20.5', source_port: 9000, bitrate_mbps: 50, redundancy_mode: 'primary', encryption: 'AES-128', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'TVN SDI Fiber', broadcaster: 'TVN S.A.', type: 'fiber', protocol: 'SDI', source_address: '10.10.2.5', source_port: 5004, bitrate_mbps: 80, redundancy_mode: 'primary', encryption: 'none', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'Eutelsat Downlink', broadcaster: 'Various', type: 'satellite', protocol: 'DVB-S2', source_address: '13.0°E Eutelsat 13B', source_port: null, bitrate_mbps: 40, redundancy_mode: 'backup', encryption: 'PowerVu', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'Hot Bird Downlink', broadcaster: 'Various', type: 'satellite', protocol: 'DVB-S2', source_address: '13.0°E Hot Bird 13B', source_port: null, bitrate_mbps: 35, redundancy_mode: 'backup', encryption: 'none', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'Backhaul WAN-WA01', broadcaster: 'Internal', type: 'backhaul', protocol: 'IP Multicast', source_address: '239.10.1.1', source_port: 1234, bitrate_mbps: 200, redundancy_mode: 'primary', encryption: 'none', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'Mikrofalowa Katowice', broadcaster: 'Internal', type: 'microwave', protocol: 'E1/IP', source_address: '172.16.5.2', source_port: null, bitrate_mbps: 34, redundancy_mode: 'backup', encryption: 'none', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'Off-Air Retransmisja Kraków', broadcaster: 'Internal', type: 'offair', protocol: 'DVB-T2', source_address: 'RF CH26 514MHz', source_port: null, bitrate_mbps: 36, redundancy_mode: 'none', encryption: 'none', status: 'active', mode: 'physical', emulator_profile_id: null },
+    { name: 'Canal+ SRT', broadcaster: 'Canal+ Polska', type: 'ip_srt', protocol: 'SRT', source_address: '82.145.20.11', source_port: 9010, bitrate_mbps: 30, redundancy_mode: 'primary', encryption: 'AES-256', status: 'active', mode: 'physical', emulator_profile_id: null },
+    // ── Wirtualne strumienie emulowane (lab / software) ──────────────────
+    { name: 'LAB Backhaul · IP Multicast', broadcaster: 'LAB Emulator', type: 'backhaul', protocol: 'IP Multicast', source_address: '239.10.10.10', source_port: 5000, bitrate_mbps: 6, redundancy_mode: 'none', encryption: 'none', status: 'active', mode: 'virtual', emulator_profile_id: 'backhaul' },
+    { name: 'LAB Satelita · DVB-S2 Relay', broadcaster: 'LAB Emulator', type: 'satellite', protocol: 'DVB-S2', source_address: '127.0.0.1', source_port: 5300, bitrate_mbps: 7, redundancy_mode: 'none', encryption: 'none', status: 'active', mode: 'virtual', emulator_profile_id: 'satellite' },
+    { name: 'LAB Off-Air · DVB-T2', broadcaster: 'LAB Emulator', type: 'offair', protocol: 'DVB-T2', source_address: '127.0.0.1', source_port: 5400, bitrate_mbps: 4, redundancy_mode: 'none', encryption: 'none', status: 'active', mode: 'virtual', emulator_profile_id: 'offair' },
+    { name: 'LAB IP/SRT', broadcaster: 'LAB Emulator', type: 'ip_srt', protocol: 'SRT', source_address: '127.0.0.1', source_port: 4201, bitrate_mbps: 5, redundancy_mode: 'none', encryption: 'none', status: 'active', mode: 'virtual', emulator_profile_id: 'ip_srt' },
   ];
 
-  const insertStream = db.prepare(`INSERT INTO input_streams (name, broadcaster, type, protocol, source_address, source_port, bitrate_mbps, redundancy_mode, encryption, status) VALUES (@name,@broadcaster,@type,@protocol,@source_address,@source_port,@bitrate_mbps,@redundancy_mode,@encryption,@status)`);
+  const insertStream = db.prepare(`INSERT INTO input_streams (name, broadcaster, type, protocol, source_address, source_port, bitrate_mbps, redundancy_mode, encryption, status, mode, emulator_profile_id) VALUES (@name,@broadcaster,@type,@protocol,@source_address,@source_port,@bitrate_mbps,@redundancy_mode,@encryption,@status,@mode,@emulator_profile_id)`);
   for (const s of streams) insertStream.run(s);
 
   // Channels for MUX 1 (id=1)
@@ -739,6 +797,9 @@ function runMigrations(db: SqliteDatabase) {
   safe(`ALTER TABLE channels ADD COLUMN audio_codec TEXT DEFAULT 'AAC'`);
   safe(`ALTER TABLE channels ADD COLUMN sample_rate_hz INTEGER DEFAULT 48000`);
   safe(`ALTER TABLE channels ADD COLUMN stereo_mode TEXT DEFAULT 'stereo'`);
+  // input_streams: physical vs virtual mode
+  safe(`ALTER TABLE input_streams ADD COLUMN mode TEXT NOT NULL DEFAULT 'physical'`);
+  safe(`ALTER TABLE input_streams ADD COLUMN emulator_profile_id TEXT`);
 }
 
 // ─── IPTV seed (idempotent) ───────────────────────────────────────────────────

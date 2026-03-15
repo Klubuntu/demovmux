@@ -1,4 +1,4 @@
-import { isDbEmpty, seedDemoData } from '@/lib/db';
+import { isDbEmpty, restoreDemoData } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 // GET /api/setup → { empty: boolean }
@@ -19,7 +19,7 @@ export async function POST() {
     if (!empty) {
       return NextResponse.json({ ok: false, message: 'Baza danych nie jest pusta – dane przykładowe już istnieją.' }, { status: 409 });
     }
-    await seedDemoData();
+    await restoreDemoData();
     return NextResponse.json({ ok: true, message: 'Dane przykładowe zostały wstawione pomyślnie.' });
   } catch (err) {
     console.error('[setup] POST error', err);

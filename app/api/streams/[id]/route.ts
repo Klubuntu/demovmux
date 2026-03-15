@@ -14,7 +14,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   await dbRun(`
     UPDATE input_streams SET name=@name, broadcaster=@broadcaster, type=@type, protocol=@protocol,
     source_address=@source_address, source_port=@source_port, bitrate_mbps=@bitrate_mbps,
-    redundancy_mode=@redundancy_mode, encryption=@encryption, status=@status,
+    redundancy_mode=@redundancy_mode, encryption=@encryption, mode=@mode,
+    emulator_profile_id=@emulator_profile_id, status=@status,
     updated_at=CURRENT_TIMESTAMP
     WHERE id=@id
   `, { ...body, id });

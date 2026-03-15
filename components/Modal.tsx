@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
 interface Props {
@@ -13,8 +13,6 @@ interface Props {
 const sizeMap = { md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 
 export default function Modal({ title, open, onClose, children, size = 'lg' }: Props) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handler);
@@ -25,9 +23,7 @@ export default function Modal({ title, open, onClose, children, size = 'lg' }: P
 
   return (
     <div
-      ref={overlayRef}
       className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-      onClick={e => { if (e.target === overlayRef.current) onClose(); }}
     >
       <div className={`bg-white rounded-2xl shadow-2xl w-full ${sizeMap[size]} max-h-[90vh] flex flex-col`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
@@ -36,7 +32,7 @@ export default function Modal({ title, open, onClose, children, size = 'lg' }: P
             <X size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div className="flex-1 overflow-y-auto px-6 py-4 pr-3 [scrollbar-gutter:stable] [scrollbar-width:auto] [&::-webkit-scrollbar]:w-4 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-gray-100 touch-pan-y">
           {children}
         </div>
       </div>

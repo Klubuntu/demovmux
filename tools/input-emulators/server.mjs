@@ -397,6 +397,48 @@ const profiles = [
     sourceHint: 'ASI/SDI over fiber transport emulation',
     deviceTemplates: deviceTemplatesByProfile.fiber,
   },
+  // ── Physical hardware monitoring profiles (mode='physical') ──────────────
+  // These listen for real MPEG-TS UDP from physical hardware without relaying.
+  // Send MPEG-TS to the listed ingestPort to see traffic in the dashboard.
+  {
+    id: 'hw_fiber',
+    label: 'Sprzęt · Światłowód / ASI',
+    type: 'fiber',
+    protocol: 'ASI/UDP',
+    mode: 'physical',
+    ingestHost: '0.0.0.0',
+    ingestPort: 16100,
+    targetHost: '127.0.0.1',
+    targetPort: 5600,
+    sourceHint: 'Fizyczny koder/odbiornik ASI → UDP → port 16100. Monitor-only; dane trafiają bezpośrednio do MUX.',
+    deviceTemplates: deviceTemplatesByProfile.fiber,
+  },
+  {
+    id: 'hw_satellite',
+    label: 'Sprzęt · Satelita / DVB-S2',
+    type: 'satellite',
+    protocol: 'DVB-S2/UDP',
+    mode: 'physical',
+    ingestHost: '0.0.0.0',
+    ingestPort: 16200,
+    targetHost: '127.0.0.1',
+    targetPort: 5300,
+    sourceHint: 'Fizyczny odbiornik satelitarny / IRD → UDP → port 16200. Monitor-only.',
+    deviceTemplates: deviceTemplatesByProfile.satellite,
+  },
+  {
+    id: 'hw_offair',
+    label: 'Sprzęt · DVB-T2 Off-Air',
+    type: 'offair',
+    protocol: 'DVB-T2/UDP',
+    mode: 'physical',
+    ingestHost: '0.0.0.0',
+    ingestPort: 16300,
+    targetHost: '127.0.0.1',
+    targetPort: 5400,
+    sourceHint: 'Fizyczny modulator DVB-T2 (HackRF, LimeSDR, Thor Broadcast, Standalone) → UDP → port 16300. Monitor-only.',
+    deviceTemplates: deviceTemplatesByProfile.offair,
+  },
 ];
 
 fs.mkdirSync(PUBLIC_DIR, { recursive: true });
